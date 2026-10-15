@@ -2,8 +2,13 @@
 Tests for Proxmox compute module.
 """
 
+from unittest.mock import MagicMock
+
+from proxmoxer.core import ResourceException
+
 from cartography.intel.proxmox.compute import extract_disk_data
 from cartography.intel.proxmox.compute import extract_network_data
+from cartography.intel.proxmox.compute import get_guest_agent_info
 from cartography.intel.proxmox.compute import transform_vm_data
 
 
@@ -117,3 +122,15 @@ def test_extract_network_data():
     assert net1["model"] == "e1000"
     assert net1["mac_address"] == "11:22:33:44:55:66"
     assert net1["bridge"] == "vmbr1"
+
+
+def test_get_guest_agent_info_returns_empty_when_agent_unavailable():
+    """A guest without a reachable agent yields no guest data instead of failing."""
+    client = MagicMock()
+    client.nodes.return_value.qemu.return_value.agent.return_value.get.side_effect = (
+        ResourceException(
+            500, "Internal Server Error", "QEMU guest agent is not running"
+        )
+    )
+
+    assert get_guest_agent_info(client, "node1", 100) == {}

@@ -1,9 +1,3 @@
-"""
-Data models for Proxmox High Availability (HA) resources.
-
-Follows Cartography's modern data model pattern.
-"""
-
 from dataclasses import dataclass
 
 from cartography.models.core.common import PropertyRef
@@ -16,53 +10,49 @@ from cartography.models.core.relationships import make_target_node_matcher
 from cartography.models.core.relationships import OtherRelationships
 from cartography.models.core.relationships import TargetNodeMatcher
 
-# ============================================================================
-# ProxmoxHAGroup Node Schema
-# ============================================================================
-
 
 @dataclass(frozen=True)
 class ProxmoxHAGroupNodeProperties(CartographyNodeProperties):
-    """
-    Properties for a ProxmoxHAGroup node.
-
-    HA groups define node preferences for high availability resources.
-    """
-
-    id: PropertyRef = PropertyRef("id")
+    id: PropertyRef = PropertyRef("id", description="HA group name.")
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
-    group: PropertyRef = PropertyRef("group", extra_index=True)
-    cluster_id: PropertyRef = PropertyRef("cluster_id")
-    nodes: PropertyRef = PropertyRef("nodes")  # Preferred node list
-    restricted: PropertyRef = PropertyRef("restricted")  # Restrict to listed nodes
-    nofailback: PropertyRef = PropertyRef("nofailback")  # Prevent failback
-    comment: PropertyRef = PropertyRef("comment")
+    group: PropertyRef = PropertyRef(
+        "group",
+        extra_index=True,
+        description="HA group name.",
+    )
+    cluster_id: PropertyRef = PropertyRef(
+        "cluster_id",
+        description="ID of the cluster that defines the HA group.",
+    )
+    nodes: PropertyRef = PropertyRef(
+        "nodes",
+        description="Cluster nodes in the group, with optional priorities, as returned by the API.",
+    )
+    restricted: PropertyRef = PropertyRef(
+        "restricted",
+        description="Whether resources in the group can run only on the group's nodes.",
+    )
+    nofailback: PropertyRef = PropertyRef(
+        "nofailback",
+        description="Whether resources stay put instead of migrating back to a higher-priority node.",
+    )
+    comment: PropertyRef = PropertyRef("comment", description="HA group comment.")
 
 
 @dataclass(frozen=True)
 class ProxmoxHAGroupToClusterRelProperties(CartographyRelProperties):
-    """
-    Properties for relationship from ProxmoxHAGroup to ProxmoxCluster.
-    """
-
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
 class ProxmoxHAGroupToClusterRel(CartographyRelSchema):
-    """
-    Relationship: (:ProxmoxHAGroup)-[:RESOURCE]->(:ProxmoxCluster)
-
-    HA groups belong to clusters.
-    """
+    """The cluster contains the HA group."""
 
     target_node_label: str = "ProxmoxCluster"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {
-            "id": PropertyRef("CLUSTER_ID", set_in_kwargs=True),
-        }
+        {"id": PropertyRef("CLUSTER_ID", set_in_kwargs=True)},
     )
-    direction: LinkDirection = LinkDirection.OUTWARD
+    direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "RESOURCE"
     properties: ProxmoxHAGroupToClusterRelProperties = (
         ProxmoxHAGroupToClusterRelProperties()
@@ -71,65 +61,66 @@ class ProxmoxHAGroupToClusterRel(CartographyRelSchema):
 
 @dataclass(frozen=True)
 class ProxmoxHAGroupSchema(CartographyNodeSchema):
-    """
-    Schema for ProxmoxHAGroup.
-
-    HA groups organize nodes for high availability resource placement.
-    """
+    """A high availability group that sets node preferences for HA resources in a Proxmox VE cluster."""
 
     label: str = "ProxmoxHAGroup"
     properties: ProxmoxHAGroupNodeProperties = ProxmoxHAGroupNodeProperties()
     sub_resource_relationship: ProxmoxHAGroupToClusterRel = ProxmoxHAGroupToClusterRel()
 
 
-# ============================================================================
-# ProxmoxHAResource Node Schema
-# ============================================================================
-
-
 @dataclass(frozen=True)
 class ProxmoxHAResourceNodeProperties(CartographyNodeProperties):
-    """
-    Properties for a ProxmoxHAResource node.
-
-    Represents VMs/containers configured for high availability.
-    """
-
-    id: PropertyRef = PropertyRef("id")
+    id: PropertyRef = PropertyRef(
+        "id",
+        description="HA resource service ID, such as vm:100 or ct:200.",
+    )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
-    sid: PropertyRef = PropertyRef("sid", extra_index=True)  # Service ID (vm:vmid)
-    cluster_id: PropertyRef = PropertyRef("cluster_id")
-    state: PropertyRef = PropertyRef("state")  # started, stopped, disabled, etc.
-    group: PropertyRef = PropertyRef("group")  # Associated HA group
-    max_restart: PropertyRef = PropertyRef("max_restart")
-    max_relocate: PropertyRef = PropertyRef("max_relocate")
-    comment: PropertyRef = PropertyRef("comment")
+    sid: PropertyRef = PropertyRef(
+        "sid",
+        extra_index=True,
+        description="HA resource service ID, such as vm:100 or ct:200.",
+    )
+    cluster_id: PropertyRef = PropertyRef(
+        "cluster_id",
+        description="ID of the cluster that manages the HA resource.",
+    )
+    state: PropertyRef = PropertyRef(
+        "state",
+        description="Requested HA state, such as started, stopped, disabled, or ignored.",
+    )
+    group: PropertyRef = PropertyRef(
+        "group",
+        description="Name of the HA group the resource belongs to.",
+    )
+    max_restart: PropertyRef = PropertyRef(
+        "max_restart",
+        description="Maximum number of restart attempts on a node after a start failure.",
+    )
+    max_relocate: PropertyRef = PropertyRef(
+        "max_relocate",
+        description="Maximum number of relocation attempts to another node after a start failure.",
+    )
+    comment: PropertyRef = PropertyRef("comment", description="HA resource comment.")
+    vmid: PropertyRef = PropertyRef(
+        "vmid",
+        description="Numeric VM ID parsed from the service ID, when the resource is a VM or container.",
+    )
 
 
 @dataclass(frozen=True)
 class ProxmoxHAResourceToClusterRelProperties(CartographyRelProperties):
-    """
-    Properties for relationship from ProxmoxHAResource to ProxmoxCluster.
-    """
-
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
 class ProxmoxHAResourceToClusterRel(CartographyRelSchema):
-    """
-    Relationship: (:ProxmoxHAResource)-[:RESOURCE]->(:ProxmoxCluster)
-
-    HA resources belong to clusters.
-    """
+    """The cluster contains the HA resource."""
 
     target_node_label: str = "ProxmoxCluster"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {
-            "id": PropertyRef("CLUSTER_ID", set_in_kwargs=True),
-        }
+        {"id": PropertyRef("CLUSTER_ID", set_in_kwargs=True)},
     )
-    direction: LinkDirection = LinkDirection.OUTWARD
+    direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "RESOURCE"
     properties: ProxmoxHAResourceToClusterRelProperties = (
         ProxmoxHAResourceToClusterRelProperties()
@@ -138,26 +129,16 @@ class ProxmoxHAResourceToClusterRel(CartographyRelSchema):
 
 @dataclass(frozen=True)
 class ProxmoxHAResourceToHAGroupRelProperties(CartographyRelProperties):
-    """
-    Properties for relationship from ProxmoxHAResource to ProxmoxHAGroup.
-    """
-
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
 class ProxmoxHAResourceToHAGroupRel(CartographyRelSchema):
-    """
-    Relationship: (:ProxmoxHAResource)-[:MEMBER_OF_HA_GROUP]->(:ProxmoxHAGroup)
-
-    HA resources are assigned to HA groups.
-    """
+    """The HA resource is assigned to the HA group."""
 
     target_node_label: str = "ProxmoxHAGroup"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {
-            "group": PropertyRef("group"),
-        }
+        {"group": PropertyRef("group")},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "MEMBER_OF_HA_GROUP"
@@ -167,12 +148,31 @@ class ProxmoxHAResourceToHAGroupRel(CartographyRelSchema):
 
 
 @dataclass(frozen=True)
-class ProxmoxHAResourceSchema(CartographyNodeSchema):
-    """
-    Schema for ProxmoxHAResource.
+class ProxmoxHAResourceToVMRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
-    HA resources represent VMs/containers configured for high availability.
-    """
+
+@dataclass(frozen=True)
+class ProxmoxHAResourceToVMRel(CartographyRelSchema):
+    """The HA resource keeps the VM or container of the same cluster highly available."""
+
+    target_node_label: str = "ProxmoxVM"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {
+            "vmid": PropertyRef("vmid"),
+            "cluster_id": PropertyRef("CLUSTER_ID", set_in_kwargs=True),
+        },
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "PROTECTS"
+    properties: ProxmoxHAResourceToVMRelProperties = (
+        ProxmoxHAResourceToVMRelProperties()
+    )
+
+
+@dataclass(frozen=True)
+class ProxmoxHAResourceSchema(CartographyNodeSchema):
+    """A VM or container managed by the high availability stack of a Proxmox VE cluster."""
 
     label: str = "ProxmoxHAResource"
     properties: ProxmoxHAResourceNodeProperties = ProxmoxHAResourceNodeProperties()
@@ -180,7 +180,5 @@ class ProxmoxHAResourceSchema(CartographyNodeSchema):
         ProxmoxHAResourceToClusterRel()
     )
     other_relationships: OtherRelationships = OtherRelationships(
-        [
-            ProxmoxHAResourceToHAGroupRel(),
-        ]
+        [ProxmoxHAResourceToHAGroupRel(), ProxmoxHAResourceToVMRel()],
     )

@@ -255,6 +255,22 @@ class Config:
     :param opsgenie_api_url: Opsgenie API base URL. Optional.
     :type opsgenie_request_timeout: int
     :param opsgenie_request_timeout: Seconds to timeout for Opsgenie API requests. Optional.
+    :type proxmox_host: str
+    :param proxmox_host: Proxmox VE host to sync. Optional.
+    :type proxmox_port: int
+    :param proxmox_port: Proxmox VE API port. Optional.
+    :type proxmox_user: str
+    :param proxmox_user: Proxmox VE user including the realm, e.g. root@pam. Optional.
+    :type proxmox_token_name: str
+    :param proxmox_token_name: Proxmox VE API token ID. Optional.
+    :type proxmox_token_value: str
+    :param proxmox_token_value: Proxmox VE API token secret. Optional.
+    :type proxmox_password: str
+    :param proxmox_password: Proxmox VE user password, used when no API token is set. Optional.
+    :type proxmox_verify_ssl: bool
+    :param proxmox_verify_ssl: Verify the TLS certificate of the Proxmox VE API. Optional.
+    :type proxmox_enable_guest_agent: bool
+    :param proxmox_enable_guest_agent: Collect data from the QEMU guest agent of running VMs. Optional.
     :type: nist_cve_url: str
     :param nist_cve_url: NIST CVE data provider base URI, e.g. https://nvd.nist.gov/feeds/json/cve/1.1. Optional.
     :type: gsuite_auth_method: str
@@ -815,6 +831,14 @@ class Config:
         opsgenie_api_key=None,
         opsgenie_api_url="https://api.opsgenie.com",
         opsgenie_request_timeout=60,
+        proxmox_host=None,
+        proxmox_port=8006,
+        proxmox_user="root@pam",
+        proxmox_token_name=None,
+        proxmox_token_value=None,
+        proxmox_password=None,
+        proxmox_verify_ssl=True,
+        proxmox_enable_guest_agent=False,
     ):
         self.neo4j_uri = neo4j_uri
         self.neo4j_user = neo4j_user
@@ -1131,3 +1155,11 @@ class Config:
         self.opsgenie_api_key = opsgenie_api_key
         self.opsgenie_api_url = opsgenie_api_url
         self.opsgenie_request_timeout = opsgenie_request_timeout
+        self.proxmox_host = proxmox_host
+        self.proxmox_port = proxmox_port
+        self.proxmox_user = proxmox_user
+        self.proxmox_token_name = proxmox_token_name
+        self.proxmox_token_value = proxmox_token_value
+        self.proxmox_password = proxmox_password
+        self.proxmox_verify_ssl = proxmox_verify_ssl
+        self.proxmox_enable_guest_agent = proxmox_enable_guest_agent

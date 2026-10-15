@@ -1,9 +1,3 @@
-"""
-Data models for Proxmox SSL/TLS certificates.
-
-Follows Cartography's modern data model pattern.
-"""
-
 from dataclasses import dataclass
 
 from cartography.models.core.common import PropertyRef
@@ -16,59 +10,80 @@ from cartography.models.core.relationships import make_target_node_matcher
 from cartography.models.core.relationships import OtherRelationships
 from cartography.models.core.relationships import TargetNodeMatcher
 
-# ============================================================================
-# ProxmoxCertificate Node Schema
-# ============================================================================
-
 
 @dataclass(frozen=True)
 class ProxmoxCertificateNodeProperties(CartographyNodeProperties):
-    """
-    Properties for a ProxmoxCertificate node.
-
-    Represents SSL/TLS certificates used by Proxmox nodes.
-    """
-
-    id: PropertyRef = PropertyRef("id")
+    id: PropertyRef = PropertyRef(
+        "id",
+        description="Certificate ID in the form node_name:filename.",
+    )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
-    cluster_id: PropertyRef = PropertyRef("cluster_id")
-    node_name: PropertyRef = PropertyRef("node_name")
-    filename: PropertyRef = PropertyRef("filename", extra_index=True)
-    fingerprint: PropertyRef = PropertyRef("fingerprint", extra_index=True)
-    issuer: PropertyRef = PropertyRef("issuer")
-    subject: PropertyRef = PropertyRef("subject")
-    san: PropertyRef = PropertyRef("san")  # Array of Subject Alternative Names
-    notbefore: PropertyRef = PropertyRef("notbefore")  # Valid from timestamp
-    notafter: PropertyRef = PropertyRef("notafter")  # Valid until timestamp
-    public_key_type: PropertyRef = PropertyRef("public_key_type")
-    public_key_bits: PropertyRef = PropertyRef("public_key_bits")
-    pem: PropertyRef = PropertyRef("pem")  # PEM-encoded certificate
+    cluster_id: PropertyRef = PropertyRef(
+        "cluster_id",
+        description="ID of the Proxmox cluster the certificate belongs to.",
+    )
+    node_name: PropertyRef = PropertyRef(
+        "node_name",
+        description="Name of the Proxmox node that uses the certificate.",
+    )
+    filename: PropertyRef = PropertyRef(
+        "filename",
+        extra_index=True,
+        description="Certificate file name on the node.",
+    )
+    fingerprint: PropertyRef = PropertyRef(
+        "fingerprint",
+        extra_index=True,
+        description="Certificate SHA-256 fingerprint.",
+    )
+    issuer: PropertyRef = PropertyRef(
+        "issuer",
+        description="Certificate issuer distinguished name.",
+    )
+    subject: PropertyRef = PropertyRef(
+        "subject",
+        description="Certificate subject distinguished name.",
+    )
+    san: PropertyRef = PropertyRef(
+        "san",
+        description="Subject alternative names of the certificate.",
+    )
+    notbefore: PropertyRef = PropertyRef(
+        "notbefore",
+        description="Start of the validity period as a Unix timestamp.",
+    )
+    notafter: PropertyRef = PropertyRef(
+        "notafter",
+        description="End of the validity period as a Unix timestamp.",
+    )
+    public_key_type: PropertyRef = PropertyRef(
+        "public_key_type",
+        description="Public key algorithm of the certificate.",
+    )
+    public_key_bits: PropertyRef = PropertyRef(
+        "public_key_bits",
+        description="Public key size in bits.",
+    )
+    pem: PropertyRef = PropertyRef(
+        "pem",
+        description="PEM-encoded certificate.",
+    )
 
 
 @dataclass(frozen=True)
 class ProxmoxCertificateToClusterRelProperties(CartographyRelProperties):
-    """
-    Properties for relationship from ProxmoxCertificate to ProxmoxCluster.
-    """
-
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
 class ProxmoxCertificateToClusterRel(CartographyRelSchema):
-    """
-    Relationship: (:ProxmoxCertificate)-[:RESOURCE]->(:ProxmoxCluster)
-
-    Certificates belong to clusters.
-    """
+    """The cluster contains the certificate."""
 
     target_node_label: str = "ProxmoxCluster"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {
-            "id": PropertyRef("CLUSTER_ID", set_in_kwargs=True),
-        }
+        {"id": PropertyRef("CLUSTER_ID", set_in_kwargs=True)},
     )
-    direction: LinkDirection = LinkDirection.OUTWARD
+    direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "RESOURCE"
     properties: ProxmoxCertificateToClusterRelProperties = (
         ProxmoxCertificateToClusterRelProperties()
@@ -77,26 +92,16 @@ class ProxmoxCertificateToClusterRel(CartographyRelSchema):
 
 @dataclass(frozen=True)
 class ProxmoxCertificateToNodeRelProperties(CartographyRelProperties):
-    """
-    Properties for relationship from ProxmoxNode to ProxmoxCertificate.
-    """
-
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
 
 @dataclass(frozen=True)
 class ProxmoxCertificateToNodeRel(CartographyRelSchema):
-    """
-    Relationship: (:ProxmoxNode)-[:HAS_CERTIFICATE]->(:ProxmoxCertificate)
-
-    Nodes use SSL certificates.
-    """
+    """The Proxmox node uses the certificate."""
 
     target_node_label: str = "ProxmoxNode"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {
-            "id": PropertyRef("node_name"),
-        }
+        {"id": PropertyRef("node_name")},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "HAS_CERTIFICATE"
@@ -107,11 +112,7 @@ class ProxmoxCertificateToNodeRel(CartographyRelSchema):
 
 @dataclass(frozen=True)
 class ProxmoxCertificateSchema(CartographyNodeSchema):
-    """
-    Schema for ProxmoxCertificate.
-
-    SSL/TLS certificates used for HTTPS and cluster communication.
-    """
+    """A TLS certificate installed on a Proxmox VE node."""
 
     label: str = "ProxmoxCertificate"
     properties: ProxmoxCertificateNodeProperties = ProxmoxCertificateNodeProperties()
@@ -119,7 +120,5 @@ class ProxmoxCertificateSchema(CartographyNodeSchema):
         ProxmoxCertificateToClusterRel()
     )
     other_relationships: OtherRelationships = OtherRelationships(
-        [
-            ProxmoxCertificateToNodeRel(),
-        ]
+        [ProxmoxCertificateToNodeRel()],
     )

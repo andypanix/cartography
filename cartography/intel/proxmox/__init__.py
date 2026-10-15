@@ -6,7 +6,6 @@ containers, storage, networks, users, and backup configurations.
 """
 
 import logging
-import os
 from typing import TYPE_CHECKING
 
 import neo4j
@@ -14,6 +13,7 @@ import neo4j
 if TYPE_CHECKING:
     from proxmoxer import ProxmoxAPI
 
+from cartography.analysis.proxmox.analysis import PROXMOX_EFFECTIVE_PERMISSIONS
 from cartography.config import Config
 from cartography.graph.job import GraphJob
 from cartography.intel.proxmox import access
@@ -44,6 +44,7 @@ from cartography.models.proxmox.pool import ProxmoxPoolSchema
 from cartography.models.proxmox.storage import ProxmoxStorageSchema
 from cartography.stats import get_stats_client
 from cartography.util import merge_module_sync_metadata
+from cartography.util import run_typed_analysis_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -52,72 +53,42 @@ stat_handler = get_stats_client(__name__)
 
 def _get_proxmox_client(config: Config) -> "ProxmoxAPI":
     """
-    Create and return a Proxmox API client.
+    Create a Proxmox API client, preferring API token over password authentication.
 
     :param config: Cartography configuration object
     :return: ProxmoxAPI client
-    :raises: ValueError if credentials not found in environment or proxmoxer not installed
+    :raises ValueError: if no usable credentials are configured
     """
-    try:
-        from proxmoxer import ProxmoxAPI
-    except ImportError:
-        raise ImportError(
-            "The proxmoxer library is required for Proxmox sync. "
-            "Install it with: pip install proxmoxer"
-        )
+    from proxmoxer import ProxmoxAPI
 
-    host = config.proxmox_host
-    port = config.proxmox_port
-    user = config.proxmox_user
-    verify_ssl = config.proxmox_verify_ssl
-
-    # Try token-based auth first (recommended)
-    if config.proxmox_token_name_env_var and config.proxmox_token_value_env_var:
-        token_name = os.environ.get(config.proxmox_token_name_env_var)
-        token_value = os.environ.get(config.proxmox_token_value_env_var)
-
-        if not token_name:
-            raise ValueError(
-                f"Environment variable {config.proxmox_token_name_env_var} "
-                f"not found or is empty"
-            )
-        if not token_value:
-            raise ValueError(
-                f"Environment variable {config.proxmox_token_value_env_var} "
-                f"not found or is empty"
-            )
-
-        logger.info(f"Connecting to Proxmox at {host} using API token")
+    if config.proxmox_token_name and config.proxmox_token_value:
+        logger.info("Connecting to Proxmox at %s using API token", config.proxmox_host)
         return ProxmoxAPI(
-            host,
-            port=port,
-            user=user,
-            token_name=token_name,
-            token_value=token_value,
-            verify_ssl=verify_ssl,
+            config.proxmox_host,
+            port=config.proxmox_port,
+            user=config.proxmox_user,
+            token_name=config.proxmox_token_name,
+            token_value=config.proxmox_token_value,
+            verify_ssl=config.proxmox_verify_ssl,
         )
 
-    # Fall back to password auth
-    elif config.proxmox_password_env_var:
-        password = os.environ.get(config.proxmox_password_env_var)
-
-        if not password:
-            raise ValueError(
-                f"Environment variable {config.proxmox_password_env_var} "
-                f"not found or is empty"
-            )
-
-        logger.info(f"Connecting to Proxmox at {host} using password auth")
+    if config.proxmox_password:
+        logger.info(
+            "Connecting to Proxmox at %s using password authentication",
+            config.proxmox_host,
+        )
         return ProxmoxAPI(
-            host,
-            port=port,
-            user=user,
-            password=password,
-            verify_ssl=verify_ssl,
+            config.proxmox_host,
+            port=config.proxmox_port,
+            user=config.proxmox_user,
+            password=config.proxmox_password,
+            verify_ssl=config.proxmox_verify_ssl,
         )
 
-    else:
-        raise ValueError("No Proxmox authentication method configured")
+    raise ValueError(
+        "Proxmox credentials not configured: set --proxmox-token-name with "
+        "--proxmox-token-value-env-var, or --proxmox-password-env-var.",
+    )
 
 
 @timeit
@@ -131,7 +102,7 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     :param config: Cartography configuration object
     """
     if not config.proxmox_host:
-        logger.info("Proxmox host not configured, skipping Proxmox sync")
+        logger.info("Proxmox import is not configured - skipping this module.")
         return
 
     logger.info(f"Starting Proxmox infrastructure sync for {config.proxmox_host}")
@@ -289,6 +260,14 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
 
     # Note: ProxmoxCluster doesn't need cleanup since it's the tenant root
     # and has no sub_resource_relationship
+
+    # Derive HAS_PERMISSION from the ACL graph once every ACL, principal, and
+    # resource edge is current, so stale grants are removed with the rest.
+    run_typed_analysis_job(
+        PROXMOX_EFFECTIVE_PERMISSIONS,
+        neo4j_session,
+        common_job_parameters,
+    )
 
     merge_module_sync_metadata(
         neo4j_session,

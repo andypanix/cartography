@@ -6,6 +6,8 @@ from typing import Any
 from unittest.mock import patch
 
 import cartography.intel.proxmox.access
+from cartography.analysis.proxmox.analysis import PROXMOX_EFFECTIVE_PERMISSIONS
+from cartography.util import run_typed_analysis_job
 from tests.data.proxmox.access import MOCK_ACL_DATA
 from tests.data.proxmox.access import MOCK_GROUP_DATA
 from tests.data.proxmox.access import MOCK_GROUP_MEMBERS_DATA
@@ -16,6 +18,66 @@ from tests.integration.util import check_rels
 
 TEST_UPDATE_TAG = 123456789
 TEST_CLUSTER_ID = "test-cluster"
+
+PERMISSION_TARGET_LABELS = (
+    "ProxmoxCluster",
+    "ProxmoxVM",
+    "ProxmoxStorage",
+    "ProxmoxPool",
+    "ProxmoxNode",
+)
+
+EXPECTED_USER_PERMISSIONS = {
+    ("root@pam", TEST_CLUSTER_ID),
+    ("admin@pve", TEST_CLUSTER_ID),
+    ("readonly@pam", "node1/qemu/100"),
+    ("readonly@pam", "local-lvm"),
+    ("admin@pve", "production"),
+    ("root@pam", "node1"),
+}
+
+EXPECTED_GROUP_PERMISSIONS = {
+    ("admins", TEST_CLUSTER_ID),
+    ("auditors", "local-lvm"),
+    ("operators", "node1"),
+}
+
+
+def _seed_acl_resources(neo4j_session) -> None:
+    """Create the cluster resources the mock ACLs point at."""
+    neo4j_session.run(
+        """
+        MERGE (c:ProxmoxCluster {id: $cluster_id})
+        SET c.name = $cluster_id, c.lastupdated = $update_tag
+        MERGE (vm:ProxmoxVM {id: 'node1/qemu/100'})
+        SET vm.vmid = 100, vm.cluster_id = $cluster_id, vm.name = 'test-vm',
+            vm.lastupdated = $update_tag
+        MERGE (s:ProxmoxStorage {id: 'local-lvm'})
+        SET s.name = 'local-lvm', s.lastupdated = $update_tag
+        MERGE (p:ProxmoxPool {id: 'production'})
+        SET p.poolid = 'production', p.lastupdated = $update_tag
+        MERGE (n:ProxmoxNode {id: 'node1'})
+        SET n.name = 'node1', n.lastupdated = $update_tag
+        """,
+        cluster_id=TEST_CLUSTER_ID,
+        update_tag=TEST_UPDATE_TAG,
+    )
+
+
+def _permissions(neo4j_session, principal_label: str) -> set[tuple[str, str]]:
+    """Return every HAS_PERMISSION edge from a principal label, as id pairs."""
+    permissions: set[tuple[str, str]] = set()
+    for target_label in PERMISSION_TARGET_LABELS:
+        permissions |= check_rels(
+            neo4j_session,
+            principal_label,
+            "id",
+            target_label,
+            "id",
+            "HAS_PERMISSION",
+            rel_direction_right=True,
+        )
+    return permissions
 
 
 @patch.object(
@@ -123,7 +185,7 @@ def test_sync_access_control(
             "ProxmoxCluster",
             "id",
             "RESOURCE",
-            rel_direction_right=True,
+            rel_direction_right=False,
         )
         == expected_user_rels
     )
@@ -164,35 +226,35 @@ def test_sync_access_control(
     ]
 
     # Assert - ACL to user relationships
-    result = neo4j_session.run(
-        """
-        MATCH (acl:ProxmoxACL)-[:APPLIES_TO_USER]->(u:ProxmoxUser)
-        RETURN acl.path as path, u.userid as userid
-        ORDER BY path, userid
-        """
-    )
-    acl_user_rels = [(r["path"], r["userid"]) for r in result]
-    assert acl_user_rels == [
-        ("/", "root@pam"),
-        ("/pool/production", "admin@pve"),
-        ("/vms/100", "readonly@pam"),
-    ]
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxACL",
+        "id",
+        "ProxmoxUser",
+        "id",
+        "APPLIES_TO_USER",
+        rel_direction_right=True,
+    ) == {
+        ("/:root@pam:Administrator", "root@pam"),
+        ("/pool/production:admin@pve:CustomRole", "admin@pve"),
+        ("/vms/100:readonly@pam:CustomRole", "readonly@pam"),
+    }
 
     # Assert - ACL to group relationships
-    result = neo4j_session.run(
-        """
-        MATCH (acl:ProxmoxACL)-[:APPLIES_TO_GROUP]->(g:ProxmoxGroup)
-        RETURN acl.path as path, g.groupid as groupid
-        ORDER BY path, groupid
-        """
-    )
-    acl_group_rels = [(r["path"], r["groupid"]) for r in result]
-    assert acl_group_rels == [
-        ("/", "admins"),
-        ("/nodes/node1", "operators"),
-        ("/storage/local-lvm", "auditors"),
-        ("/vms", "auditors"),
-    ]
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxACL",
+        "id",
+        "ProxmoxGroup",
+        "id",
+        "APPLIES_TO_GROUP",
+        rel_direction_right=True,
+    ) == {
+        ("/:admins:Administrator", "admins"),
+        ("/nodes/node1:operators:PVEAuditor", "operators"),
+        ("/storage/local-lvm:auditors:PVEAuditor", "auditors"),
+        ("/vms:auditors:PVEAuditor", "auditors"),
+    }
 
     # Assert - User properties
     result = neo4j_session.run(
@@ -238,42 +300,7 @@ def test_acl_resource_relationships(
         "CLUSTER_ID": TEST_CLUSTER_ID,
     }
 
-    # Create cluster
-    neo4j_session.run(
-        """
-        MERGE (c:ProxmoxCluster {id: $cluster_id})
-        SET c.name = $cluster_id, c.lastupdated = $update_tag
-        """,
-        cluster_id=TEST_CLUSTER_ID,
-        update_tag=TEST_UPDATE_TAG,
-    )
-
-    # Create test resources for ACLs to link to
-    neo4j_session.run(
-        """
-        // Create VM
-        MERGE (vm:ProxmoxVM {vmid: 100})
-        SET vm.id = 'node1/qemu/100',
-            vm.name = 'test-vm',
-            vm.lastupdated = $update_tag
-
-        // Create Storage
-        MERGE (s:ProxmoxStorage {id: 'local-lvm'})
-        SET s.name = 'local-lvm',
-            s.lastupdated = $update_tag
-
-        // Create Pool
-        MERGE (p:ProxmoxPool {poolid: 'production'})
-        SET p.id = 'production',
-            p.lastupdated = $update_tag
-
-        // Create Node
-        MERGE (n:ProxmoxNode {id: 'node1'})
-        SET n.name = 'node1',
-            n.lastupdated = $update_tag
-        """,
-        update_tag=TEST_UPDATE_TAG,
-    )
+    _seed_acl_resources(neo4j_session)
 
     # Act
     cartography.intel.proxmox.access.sync(
@@ -284,50 +311,30 @@ def test_acl_resource_relationships(
         common_job_parameters,
     )
 
-    # Assert - ACL to cluster relationships (root path)
-    result = neo4j_session.run(
-        """
-        MATCH (acl:ProxmoxACL {path: '/'})-[:GRANTS_ACCESS_TO]->(c:ProxmoxCluster)
-        RETURN count(*) as count
-        """
-    )
-    assert result.single()["count"] == 2  # root@pam and admins group
-
-    # Assert - ACL to VM relationships
-    result = neo4j_session.run(
-        """
-        MATCH (acl:ProxmoxACL {path: '/vms/100'})-[:GRANTS_ACCESS_TO]->(vm:ProxmoxVM {vmid: 100})
-        RETURN count(*) as count
-        """
-    )
-    assert result.single()["count"] == 1  # readonly@pam
-
-    # Assert - ACL to Storage relationships
-    result = neo4j_session.run(
-        """
-        MATCH (acl:ProxmoxACL {path: '/storage/local-lvm'})-[:GRANTS_ACCESS_TO]->(s:ProxmoxStorage {id: 'local-lvm'})
-        RETURN count(*) as count
-        """
-    )
-    assert result.single()["count"] == 1  # auditors group
-
-    # Assert - ACL to Pool relationships
-    result = neo4j_session.run(
-        """
-        MATCH (acl:ProxmoxACL {path: '/pool/production'})-[:GRANTS_ACCESS_TO]->(p:ProxmoxPool {poolid: 'production'})
-        RETURN count(*) as count
-        """
-    )
-    assert result.single()["count"] == 1  # admin@pve
-
-    # Assert - ACL to Node relationships
-    result = neo4j_session.run(
-        """
-        MATCH (acl:ProxmoxACL {path: '/nodes/node1'})-[:GRANTS_ACCESS_TO]->(n:ProxmoxNode {id: 'node1'})
-        RETURN count(*) as count
-        """
-    )
-    assert result.single()["count"] == 1  # operators group
+    # Assert - ACL to resource relationships, one target label at a time
+    expected_targets = {
+        "ProxmoxCluster": {
+            ("/:root@pam:Administrator", TEST_CLUSTER_ID),
+            ("/:admins:Administrator", TEST_CLUSTER_ID),
+        },
+        "ProxmoxVM": {("/vms/100:readonly@pam:CustomRole", "node1/qemu/100")},
+        "ProxmoxStorage": {("/storage/local-lvm:auditors:PVEAuditor", "local-lvm")},
+        "ProxmoxPool": {("/pool/production:admin@pve:CustomRole", "production")},
+        "ProxmoxNode": {("/nodes/node1:operators:PVEAuditor", "node1")},
+    }
+    for target_label, expected in expected_targets.items():
+        assert (
+            check_rels(
+                neo4j_session,
+                "ProxmoxACL",
+                "id",
+                target_label,
+                "id",
+                "GRANTS_ACCESS_TO",
+                rel_direction_right=True,
+            )
+            == expected
+        ), target_label
 
     # Assert - ACL properties include resource metadata
     result = neo4j_session.run(
@@ -373,26 +380,7 @@ def test_effective_permissions(
         "CLUSTER_ID": TEST_CLUSTER_ID,
     }
 
-    # Create cluster
-    neo4j_session.run(
-        """
-        MERGE (c:ProxmoxCluster {id: $cluster_id})
-        SET c.name = $cluster_id, c.lastupdated = $update_tag
-        """,
-        cluster_id=TEST_CLUSTER_ID,
-        update_tag=TEST_UPDATE_TAG,
-    )
-
-    # Create test resources
-    neo4j_session.run(
-        """
-        MERGE (vm:ProxmoxVM {vmid: 100})
-        SET vm.id = 'node1/qemu/100', vm.name = 'test-vm'
-
-        MERGE (c:ProxmoxCluster {id: $cluster_id})
-        """,
-        cluster_id=TEST_CLUSTER_ID,
-    )
+    _seed_acl_resources(neo4j_session)
 
     # Act
     cartography.intel.proxmox.access.sync(
@@ -402,51 +390,15 @@ def test_effective_permissions(
         TEST_UPDATE_TAG,
         common_job_parameters,
     )
-
-    # Assert - Direct user permissions exist
-    result = neo4j_session.run(
-        """
-        MATCH (u:ProxmoxUser {userid: 'root@pam'})-[p:HAS_PERMISSION]->(c:ProxmoxCluster)
-        RETURN p.role as role, p.privileges as privileges, p.via_group as via_group
-        """
+    run_typed_analysis_job(
+        PROXMOX_EFFECTIVE_PERMISSIONS,
+        neo4j_session,
+        common_job_parameters,
     )
-    permission = result.single()
-    assert permission is not None
-    assert permission["role"] == "Administrator"
-    assert "VM.Allocate" in permission["privileges"]
 
-    # Assert - Group permissions exist
-    result = neo4j_session.run(
-        """
-        MATCH (g:ProxmoxGroup {groupid: 'admins'})-[p:HAS_PERMISSION]->(c:ProxmoxCluster)
-        RETURN p.role as role
-        """
-    )
-    group_permission = result.single()
-    assert group_permission is not None
-    assert group_permission["role"] == "Administrator"
+    # Assert - Users get permissions from their own ACLs and their groups' ACLs:
+    # root@pam reaches node1 only through the operators group.
+    assert _permissions(neo4j_session, "ProxmoxUser") == EXPECTED_USER_PERMISSIONS
 
-    # Assert - Inherited permissions (user -> group -> resource)
-    result = neo4j_session.run(
-        """
-        MATCH (u:ProxmoxUser)-[:MEMBER_OF_GROUP]->(g:ProxmoxGroup {groupid: 'admins'})
-        MATCH (u)-[p:HAS_PERMISSION]->(c:ProxmoxCluster)
-        WHERE p.via_group = true OR p.via_group IS NULL
-        RETURN count(DISTINCT u) as user_count
-        """
-    )
-    # Both root@pam and admin@pve are in admins group, should have permissions to cluster
-    assert result.single()["user_count"] >= 2
-
-    # Assert - Permission metadata is present
-    result = neo4j_session.run(
-        """
-        MATCH (u:ProxmoxUser {userid: 'readonly@pam'})-[p:HAS_PERMISSION]->(vm:ProxmoxVM {vmid: 100})
-        RETURN p.via_acl as via_acl, p.path as path, p.propagate as propagate
-        """
-    )
-    vm_permission = result.single()
-    if vm_permission:  # Only if VM was created
-        assert vm_permission["via_acl"] is not None
-        assert vm_permission["path"] == "/vms/100"
-        assert vm_permission["propagate"] is not None
+    # Assert - Groups get permissions from the ACLs that name them
+    assert _permissions(neo4j_session, "ProxmoxGroup") == EXPECTED_GROUP_PERMISSIONS

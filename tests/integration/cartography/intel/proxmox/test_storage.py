@@ -71,7 +71,7 @@ def test_sync_storage(mock_get_storage, neo4j_session):
             "ProxmoxCluster",
             "id",
             "RESOURCE",
-            rel_direction_right=True,
+            rel_direction_right=False,
         )
         == expected_rels
     )
@@ -174,24 +174,17 @@ def test_storage_node_relationships(mock_get_storage, neo4j_session):
         common_job_parameters,
     )
 
-    # Assert - Check storage->node AVAILABLE_ON relationships
-    result = neo4j_session.run(
-        """
-        MATCH (s:ProxmoxStorage {id: 'local'})-[r:AVAILABLE_ON]->(n:ProxmoxNode)
-        RETURN n.name
-        ORDER BY n.name
-        """
-    )
-    nodes = [record["n.name"] for record in result]
-    assert nodes == ["node1", "node2"]
-
-    # Assert - Check shared storage is available on all nodes
-    result = neo4j_session.run(
-        """
-        MATCH (s:ProxmoxStorage {id: 'nfs-backup'})-[r:AVAILABLE_ON]->(n:ProxmoxNode)
-        RETURN n.name
-        ORDER BY n.name
-        """
-    )
-    nodes = [record["n.name"] for record in result]
-    assert nodes == ["node1", "node2"]
+    # Assert - Each storage is available on the nodes it lists
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxStorage",
+        "id",
+        "ProxmoxNode",
+        "id",
+        "AVAILABLE_ON",
+        rel_direction_right=True,
+    ) == {
+        (storage, node)
+        for storage in ("local", "local-lvm", "nfs-backup")
+        for node in ("node1", "node2")
+    }

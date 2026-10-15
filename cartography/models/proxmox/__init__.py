@@ -1,3 +1,0 @@
-"""
-Proxmox data models.
-"""

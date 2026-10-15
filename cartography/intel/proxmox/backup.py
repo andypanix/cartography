@@ -38,6 +38,25 @@ def get_backup_jobs(proxmox_client: Any) -> list[dict[str, Any]]:
 # ============================================================================
 
 
+def _parse_backup_vmids(vmid_field: str | int | None) -> list[int]:
+    """
+    Return the VM IDs a backup job lists explicitly.
+
+    The vmid field holds one ID ("100"), a comma-separated list ("100,101"),
+    "all", or a pool reference ("pool:name"). Only explicit IDs map to guests:
+    "all" and pool references select guests at run time.
+
+    :param vmid_field: Raw vmid field of the backup job
+    :return: List of VM IDs, empty when the job does not list guests explicitly
+    """
+    if vmid_field is None:
+        return []
+    vmids = str(vmid_field)
+    if vmids == "all" or vmids.startswith("pool:"):
+        return []
+    return [int(vmid.strip()) for vmid in vmids.split(",") if vmid.strip().isdigit()]
+
+
 def transform_backup_job_data(
     jobs: list[dict[str, Any]],
     cluster_id: str,
@@ -100,6 +119,7 @@ def transform_backup_job_data(
                 "prune_keep_monthly": prune_keep_monthly,
                 "prune_keep_yearly": prune_keep_yearly,
                 "repeat_missed": job.get("repeat-missed", False),
+                "vmids": _parse_backup_vmids(job.get("vmid")),
             }
         )
 
@@ -131,40 +151,6 @@ def load_backup_jobs(
         jobs,
         lastupdated=update_tag,
         CLUSTER_ID=cluster_id,
-    )
-
-
-def load_backup_job_vm_relationships(
-    neo4j_session: neo4j.Session,
-    job_vms: list[dict[str, Any]],
-    update_tag: int,
-) -> None:
-    """
-    Create relationships between backup jobs and the VMs they back up.
-
-    :param neo4j_session: Neo4j session
-    :param job_vms: List of job-VM mappings
-    :param update_tag: Sync timestamp
-    """
-    from cartography.client.core.tx import run_write_query
-
-    if not job_vms:
-        return
-
-    query = """
-    UNWIND $JobVMs as jv
-    MATCH (j:ProxmoxBackupJob{id: jv.job_id})
-    MATCH (v:ProxmoxVM{vmid: jv.vmid})
-    MERGE (j)-[r:BACKS_UP]->(v)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $UpdateTag
-    """
-
-    run_write_query(
-        neo4j_session,
-        query,
-        JobVMs=job_vms,
-        UpdateTag=update_tag,
     )
 
 
@@ -201,41 +187,14 @@ def sync(
         logger.info("No backup jobs found")
         return
 
-    # Collect job-VM relationships
-    job_vms = []
-    for job in jobs:
-        job_id = job["id"]
-
-        # Parse vmid field which can be:
-        # - Single VMID: "100"
-        # - Multiple VMIDs: "100,101,102"
-        # - All VMs: "all"
-        # - Pool: "pool:poolname"
-        if "vmid" in job and job["vmid"] != "all":
-            vmid_str = job["vmid"]
-
-            # Skip pool references for now (would need pool member lookup)
-            if not vmid_str.startswith("pool:"):
-                vmids = [
-                    int(vid.strip())
-                    for vid in vmid_str.split(",")
-                    if vid.strip().isdigit()
-                ]
-                for vmid in vmids:
-                    job_vms.append(
-                        {
-                            "job_id": job_id,
-                            "vmid": vmid,
-                        }
-                    )
-
     # TRANSFORM - manipulate data for ingestion
     transformed_jobs = transform_backup_job_data(jobs, cluster_id)
 
     # LOAD - ingest to Neo4j
     load_backup_jobs(neo4j_session, transformed_jobs, cluster_id, update_tag)
-    load_backup_job_vm_relationships(neo4j_session, job_vms, update_tag)
 
     logger.info(
-        f"Synced {len(transformed_jobs)} backup jobs covering {len(job_vms)} VMs"
+        "Synced %d backup jobs covering %d explicitly listed guests",
+        len(transformed_jobs),
+        sum(len(job["vmids"]) for job in transformed_jobs),
     )

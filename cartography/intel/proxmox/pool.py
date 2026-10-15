@@ -51,9 +51,34 @@ def get_pool_details(proxmox_client: Any, poolid: str) -> dict[str, Any]:
 # ============================================================================
 
 
+def _pool_member_ids(members: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """
+    Split pool members into guest IDs and storage IDs.
+
+    Guest IDs use the node/type/vmid form of ProxmoxVM IDs, so a member only
+    matches the guest on its own node.
+
+    :param members: Members of one pool, as returned by the pool details API
+    :return: Tuple of (guest IDs, storage IDs)
+    """
+    vm_ids = []
+    storage_ids = []
+    for member in members:
+        member_type = member.get("type")
+        if member_type in ("qemu", "lxc"):
+            node = member.get("node")
+            vmid = member.get("vmid")
+            if node and vmid is not None:
+                vm_ids.append(f"{node}/{member_type}/{vmid}")
+        elif member_type == "storage" and member.get("storage"):
+            storage_ids.append(member["storage"])
+    return vm_ids, storage_ids
+
+
 def transform_pool_data(
     pools: list[dict[str, Any]],
     cluster_id: str,
+    pool_details: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Transform pool data into standard format.
@@ -64,13 +89,17 @@ def transform_pool_data(
 
     :param pools: Raw pool data from API
     :param cluster_id: Parent cluster ID
+    :param pool_details: Map of pool ID -> pool details, which list the members
     :return: List of transformed pool dicts
     """
     transformed_pools = []
+    pool_details = pool_details or {}
 
     for pool in pools:
         # Required field - use direct access
         poolid = pool["poolid"]
+        members = pool_details.get(poolid, {}).get("members", [])
+        vm_ids, storage_ids = _pool_member_ids(members)
 
         transformed_pools.append(
             {
@@ -78,6 +107,8 @@ def transform_pool_data(
                 "poolid": poolid,
                 "comment": pool.get("comment"),
                 "cluster_id": cluster_id,
+                "vm_ids": vm_ids,
+                "storage_ids": storage_ids,
             }
         )
 
@@ -112,64 +143,6 @@ def load_pools(
     )
 
 
-def load_pool_member_relationships(
-    neo4j_session: neo4j.Session,
-    pool_members: list[dict[str, Any]],
-    update_tag: int,
-) -> None:
-    """
-    Create relationships between pools and their member resources (VMs, storage).
-
-    Pool members can include VMs/containers and storage resources.
-
-    :param neo4j_session: Neo4j session
-    :param pool_members: List of pool-member mappings
-    :param update_tag: Sync timestamp
-    """
-    from cartography.client.core.tx import run_write_query
-
-    if not pool_members:
-        return
-
-    # Separate VM/container members from storage members
-    vm_members = [m for m in pool_members if m["type"] in ("qemu", "lxc")]
-    storage_members = [m for m in pool_members if m["type"] == "storage"]
-
-    # Create relationships to VMs/containers
-    if vm_members:
-        query = """
-        UNWIND $Members as member
-        MATCH (p:ProxmoxPool{id: member.pool_id})
-        MATCH (v:ProxmoxVM{vmid: member.vmid})
-        MERGE (p)-[r:CONTAINS_VM]->(v)
-        ON CREATE SET r.firstseen = timestamp()
-        SET r.lastupdated = $UpdateTag
-        """
-        run_write_query(
-            neo4j_session,
-            query,
-            Members=vm_members,
-            UpdateTag=update_tag,
-        )
-
-    # Create relationships to storage
-    if storage_members:
-        query = """
-        UNWIND $Members as member
-        MATCH (p:ProxmoxPool{id: member.pool_id})
-        MATCH (s:ProxmoxStorage{id: member.storage_id})
-        MERGE (p)-[r:CONTAINS_STORAGE]->(s)
-        ON CREATE SET r.firstseen = timestamp()
-        SET r.lastupdated = $UpdateTag
-        """
-        run_write_query(
-            neo4j_session,
-            query,
-            Members=storage_members,
-            UpdateTag=update_tag,
-        )
-
-
 # ============================================================================
 # SYNC function - orchestrates Get → Transform → Load
 # ============================================================================
@@ -199,34 +172,21 @@ def sync(
     # GET - retrieve data from API
     pools = get_pools(proxmox_client)
 
-    # Collect pool member information
-    pool_members = []
-    for pool in pools:
-        poolid = pool["poolid"]
-        details = get_pool_details(proxmox_client, poolid)
-
-        # Extract members from pool details
-        if "members" in details:
-            for member in details["members"]:
-                member_data = {
-                    "pool_id": poolid,
-                    "type": member.get("type"),
-                }
-
-                if member.get("type") in ("qemu", "lxc"):
-                    member_data["vmid"] = member.get("vmid")
-                elif member.get("type") == "storage":
-                    member_data["storage_id"] = member.get("storage")
-
-                pool_members.append(member_data)
+    pool_details = {
+        pool["poolid"]: get_pool_details(proxmox_client, pool["poolid"])
+        for pool in pools
+    }
 
     # TRANSFORM - manipulate data for ingestion
-    transformed_pools = transform_pool_data(pools, cluster_id)
+    transformed_pools = transform_pool_data(pools, cluster_id, pool_details)
 
     # LOAD - ingest to Neo4j
     load_pools(neo4j_session, transformed_pools, cluster_id, update_tag)
-    load_pool_member_relationships(neo4j_session, pool_members, update_tag)
 
     logger.info(
-        f"Synced {len(transformed_pools)} resource pools with {len(pool_members)} members"
+        "Synced %d resource pools with %d members",
+        len(transformed_pools),
+        sum(
+            len(pool["vm_ids"]) + len(pool["storage_ids"]) for pool in transformed_pools
+        ),
     )

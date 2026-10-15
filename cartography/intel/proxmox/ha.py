@@ -87,6 +87,19 @@ def transform_ha_group_data(
     return transformed_groups
 
 
+def _parse_guest_vmid(sid: str) -> int | None:
+    """
+    Return the numeric VM ID of an HA service ID that names a guest.
+
+    :param sid: HA service ID, such as vm:100 or ct:200
+    :return: The VM ID, or None when the service is not a VM or container
+    """
+    kind, _, vmid = sid.partition(":")
+    if kind in ("vm", "ct") and vmid.isdigit():
+        return int(vmid)
+    return None
+
+
 def transform_ha_resource_data(
     resources: list[dict[str, Any]],
     cluster_id: str,
@@ -114,6 +127,7 @@ def transform_ha_resource_data(
                 "max_restart": resource.get("max_restart"),
                 "max_relocate": resource.get("max_relocate"),
                 "comment": resource.get("comment"),
+                "vmid": _parse_guest_vmid(sid),
             }
         )
 
@@ -171,54 +185,6 @@ def load_ha_resources(
     )
 
 
-def load_ha_resource_vm_relationships(
-    neo4j_session: neo4j.Session,
-    resources: list[dict[str, Any]],
-    update_tag: int,
-) -> None:
-    """
-    Create relationships between HA resources and their VMs.
-
-    :param neo4j_session: Neo4j session
-    :param resources: List of HA resource dicts
-    :param update_tag: Sync timestamp
-    """
-    from cartography.client.core.tx import run_write_query
-
-    # Extract VM IDs from service IDs (format: vm:100, ct:200)
-    vm_mappings = []
-    for resource in resources:
-        sid = resource["sid"]
-        if ":" in sid:
-            parts = sid.split(":", 1)
-            if parts[0] in ("vm", "ct") and parts[1].isdigit():
-                vm_mappings.append(
-                    {
-                        "ha_resource_id": sid,
-                        "vmid": int(parts[1]),
-                    }
-                )
-
-    if not vm_mappings:
-        return
-
-    query = """
-    UNWIND $Mappings as mapping
-    MATCH (ha:ProxmoxHAResource{id: mapping.ha_resource_id})
-    MATCH (v:ProxmoxVM{vmid: mapping.vmid})
-    MERGE (ha)-[r:PROTECTS]->(v)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $UpdateTag
-    """
-
-    run_write_query(
-        neo4j_session,
-        query,
-        Mappings=vm_mappings,
-        UpdateTag=update_tag,
-    )
-
-
 # ============================================================================
 # SYNC function - orchestrates Get → Transform → Load
 # ============================================================================
@@ -259,9 +225,6 @@ def sync(
 
     if transformed_resources:
         load_ha_resources(neo4j_session, transformed_resources, cluster_id, update_tag)
-        load_ha_resource_vm_relationships(
-            neo4j_session, transformed_resources, update_tag
-        )
 
     logger.info(
         f"Synced {len(transformed_groups)} HA groups and {len(transformed_resources)} HA resources"

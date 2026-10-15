@@ -194,7 +194,7 @@ def test_full_proxmox_sync(
     # Cluster -> Node -> VM structure
     result = neo4j_session.run(
         """
-        MATCH (c:ProxmoxCluster {id: $cluster_id})<-[:RESOURCE]-(n:ProxmoxNode)-[:HOSTS_VM]->(v:ProxmoxVM)
+        MATCH (c:ProxmoxCluster {id: $cluster_id})-[:RESOURCE]->(n:ProxmoxNode)-[:HOSTS_VM]->(v:ProxmoxVM)
         RETURN count(DISTINCT v) as vm_count
         """,
         cluster_id=TEST_CLUSTER_ID,
@@ -273,7 +273,7 @@ def test_cleanup_removes_stale_data(
             n.lastupdated = 1
         WITH n
         MATCH (c:ProxmoxCluster {id: $cluster_id})
-        MERGE (n)-[r:RESOURCE]->(c)
+        MERGE (c)-[r:RESOURCE]->(n)
         SET r.lastupdated = 1
         """,
         cluster_id=TEST_CLUSTER_ID,

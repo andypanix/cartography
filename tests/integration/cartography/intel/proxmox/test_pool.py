@@ -47,12 +47,12 @@ def test_sync_pools(mock_get_pool_details, mock_get_pools, neo4j_session):
     # Create VMs and storage for relationship tests
     neo4j_session.run(
         """
-        MERGE (v1:ProxmoxVM {vmid: 100})
-        SET v1.id = 'node1:100', v1.name = 'test-vm-1', v1.lastupdated = $update_tag
-        MERGE (v2:ProxmoxVM {vmid: 101})
-        SET v2.id = 'node1:101', v2.name = 'test-vm-2', v2.lastupdated = $update_tag
-        MERGE (v3:ProxmoxVM {vmid: 200})
-        SET v3.id = 'node2:200', v3.name = 'test-container-1', v3.lastupdated = $update_tag
+        MERGE (v1:ProxmoxVM {id: 'node1/qemu/100'})
+        SET v1.vmid = 100, v1.cluster_id = 'test-cluster', v1.name = 'test-vm-1', v1.lastupdated = $update_tag
+        MERGE (v2:ProxmoxVM {id: 'node1/qemu/101'})
+        SET v2.vmid = 101, v2.cluster_id = 'test-cluster', v2.name = 'test-vm-2', v2.lastupdated = $update_tag
+        MERGE (v3:ProxmoxVM {id: 'node2/lxc/200'})
+        SET v3.vmid = 200, v3.cluster_id = 'test-cluster', v3.name = 'test-container-1', v3.lastupdated = $update_tag
         MERGE (s:ProxmoxStorage {id: 'nfs-backup'})
         SET s.name = 'nfs-backup', s.lastupdated = $update_tag
         """,
@@ -92,32 +92,37 @@ def test_sync_pools(mock_get_pool_details, mock_get_pools, neo4j_session):
             "ProxmoxCluster",
             "id",
             "RESOURCE",
-            rel_direction_right=True,
+            rel_direction_right=False,
         )
         == expected_rels
     )
 
     # Assert - Pool to VM relationships
-    result = neo4j_session.run(
-        """
-        MATCH (p:ProxmoxPool)-[:CONTAINS_VM]->(v:ProxmoxVM)
-        RETURN p.id as pool_id, v.vmid as vmid
-        ORDER BY pool_id, vmid
-        """
+    expected_vm_rels = {
+        ("development", "node1/qemu/101"),
+        ("production", "node1/qemu/100"),
+        ("production", "node2/lxc/200"),
+    }
+    assert (
+        check_rels(
+            neo4j_session,
+            "ProxmoxPool",
+            "id",
+            "ProxmoxVM",
+            "id",
+            "CONTAINS_VM",
+            rel_direction_right=True,
+        )
+        == expected_vm_rels
     )
-    pool_vm_rels = [(r["pool_id"], r["vmid"]) for r in result]
-    assert pool_vm_rels == [
-        ("development", 101),
-        ("production", 100),
-        ("production", 200),
-    ]
 
     # Assert - Pool to storage relationships
-    result = neo4j_session.run(
-        """
-        MATCH (p:ProxmoxPool)-[:CONTAINS_STORAGE]->(s:ProxmoxStorage)
-        RETURN p.id as pool_id, s.id as storage_id
-        """
-    )
-    pool_storage_rels = [(r["pool_id"], r["storage_id"]) for r in result]
-    assert pool_storage_rels == [("backup-storage", "nfs-backup")]
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxPool",
+        "id",
+        "ProxmoxStorage",
+        "id",
+        "CONTAINS_STORAGE",
+        rel_direction_right=True,
+    ) == {("backup-storage", "nfs-backup")}

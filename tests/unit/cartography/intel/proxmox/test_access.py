@@ -211,3 +211,54 @@ def test_transform_acl_data():
     assert node_acl["principal_type"] == "user"
     assert node_acl["resource_type"] == "node"
     assert node_acl["resource_id"] == "node1"
+
+
+def test_transform_acl_data_sets_relationship_targets():
+    """Each ACL sets only the target fields that match its principal and path."""
+    acls = [
+        {"path": "/", "roleid": "Administrator", "ugid": "root@pam"},
+        {"path": "/vms/100", "roleid": "PVEAuditor", "ugid": "ops@pve!ci"},
+        {"path": "/storage/local", "roleid": "PVEAuditor", "ugid": "auditors"},
+        {"path": "/pool/production", "roleid": "PVEAuditor", "ugid": "auditors"},
+        {"path": "/nodes/node1", "roleid": "PVEAuditor", "ugid": "auditors"},
+        {"path": "/access", "roleid": "PVEAuditor", "ugid": "auditors"},
+    ]
+    target_keys = (
+        "target_user_id",
+        "target_group_id",
+        "target_vmid",
+        "target_storage_id",
+        "target_pool_id",
+        "target_node_id",
+        "target_cluster_id",
+    )
+
+    result = transform_acl_data(acls, "test-cluster")
+
+    targets = {
+        acl["id"]: {key: acl[key] for key in target_keys if acl[key] is not None}
+        for acl in result
+    }
+    assert targets == {
+        "/:root@pam:Administrator": {
+            "target_user_id": "root@pam",
+            "target_cluster_id": "test-cluster",
+        },
+        "/vms/100:ops@pve!ci:PVEAuditor": {
+            "target_user_id": "ops@pve",
+            "target_vmid": 100,
+        },
+        "/storage/local:auditors:PVEAuditor": {
+            "target_group_id": "auditors",
+            "target_storage_id": "local",
+        },
+        "/pool/production:auditors:PVEAuditor": {
+            "target_group_id": "auditors",
+            "target_pool_id": "production",
+        },
+        "/nodes/node1:auditors:PVEAuditor": {
+            "target_group_id": "auditors",
+            "target_node_id": "node1",
+        },
+        "/access:auditors:PVEAuditor": {"target_group_id": "auditors"},
+    }

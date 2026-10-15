@@ -134,6 +134,7 @@ TOP_LEVEL_MODULES: OrderedDict[str, Callable[..., None]] = OrderedDict(
         "opsgenie": _LazyStage(
             "cartography.intel.opsgenie", "start_opsgenie_ingestion"
         ),
+        "proxmox": _LazyStage("cartography.intel.proxmox", "start_proxmox_ingestion"),
         "bbot": _LazyStage("cartography.intel.bbot", "start_bbot_ingestion"),
         "docker_scout": _LazyStage(
             "cartography.intel.docker_scout", "start_docker_scout_ingestion"

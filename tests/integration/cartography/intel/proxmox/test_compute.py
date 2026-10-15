@@ -102,7 +102,7 @@ def test_sync_vms_and_containers(
             "ProxmoxCluster",
             "id",
             "RESOURCE",
-            rel_direction_right=True,
+            rel_direction_right=False,
         )
         == expected_rels
     )

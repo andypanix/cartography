@@ -225,3 +225,26 @@ def test_transform_multiple_backup_jobs():
     assert transformed[2]["prune_keep_last"] is None
     assert transformed[2]["prune_keep_weekly"] == 4
     assert transformed[2]["prune_keep_monthly"] == 6
+
+
+def test_transform_backup_job_parses_vmids():
+    """Only explicitly listed guests become backup targets."""
+    jobs = [
+        {"id": "single", "vmid": "100"},
+        {"id": "list", "vmid": "100, 101,abc"},
+        {"id": "numeric", "vmid": 102},
+        {"id": "all", "vmid": "all"},
+        {"id": "pool", "vmid": "pool:production"},
+        {"id": "missing"},
+    ]
+
+    result = transform_backup_job_data(jobs, "test-cluster")
+
+    assert {job["id"]: job["vmids"] for job in result} == {
+        "single": [100],
+        "list": [100, 101],
+        "numeric": [102],
+        "all": [],
+        "pool": [],
+        "missing": [],
+    }

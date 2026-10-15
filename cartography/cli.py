@@ -66,6 +66,7 @@ PANEL_CVE_METADATA = "CVE Metadata Options"
 PANEL_PAGERDUTY = "PagerDuty Options"
 PANEL_JIRA = "Jira Options"
 PANEL_OPSGENIE = "Opsgenie Options"
+PANEL_PROXMOX = "Proxmox Options"
 PANEL_LASTPASS = "LastPass Options"
 PANEL_BIGFIX = "BigFix Options"
 PANEL_DUO = "Duo Options"
@@ -138,6 +139,7 @@ MODULE_PANELS = {
     "pagerduty": PANEL_PAGERDUTY,
     "zoom": PANEL_ZOOM,
     "opsgenie": PANEL_OPSGENIE,
+    "proxmox": PANEL_PROXMOX,
     "jumpcloud": PANEL_JUMPCLOUD,
     "socketdev": PANEL_SOCKETDEV,
     "jira": PANEL_JIRA,
@@ -1394,6 +1396,83 @@ class CLI:
                     hidden=PANEL_OPSGENIE not in visible_panels,
                 ),
             ] = 60,
+            # =================================================================
+            # Proxmox Options
+            # =================================================================
+            proxmox_host: Annotated[
+                str | None,
+                typer.Option(
+                    "--proxmox-host",
+                    help="Proxmox VE host to sync, e.g. proxmox.example.com. Required to enable the Proxmox module.",
+                    rich_help_panel=PANEL_PROXMOX,
+                    hidden=PANEL_PROXMOX not in visible_panels,
+                ),
+            ] = None,
+            proxmox_port: Annotated[
+                int,
+                typer.Option(
+                    "--proxmox-port",
+                    help="Proxmox VE API port.",
+                    min=1,
+                    max=65535,
+                    rich_help_panel=PANEL_PROXMOX,
+                    hidden=PANEL_PROXMOX not in visible_panels,
+                ),
+            ] = 8006,
+            proxmox_user: Annotated[
+                str,
+                typer.Option(
+                    "--proxmox-user",
+                    help="Proxmox VE user, including the realm, e.g. cartography@pve.",
+                    rich_help_panel=PANEL_PROXMOX,
+                    hidden=PANEL_PROXMOX not in visible_panels,
+                ),
+            ] = "root@pam",
+            proxmox_token_name: Annotated[
+                str | None,
+                typer.Option(
+                    "--proxmox-token-name",
+                    help="Proxmox VE API token ID (the part after '!'). Use with --proxmox-token-value-env-var.",
+                    rich_help_panel=PANEL_PROXMOX,
+                    hidden=PANEL_PROXMOX not in visible_panels,
+                ),
+            ] = None,
+            proxmox_token_value_env_var: Annotated[
+                str | None,
+                typer.Option(
+                    "--proxmox-token-value-env-var",
+                    help="Environment variable name containing the Proxmox VE API token secret.",
+                    rich_help_panel=PANEL_PROXMOX,
+                    hidden=PANEL_PROXMOX not in visible_panels,
+                ),
+            ] = None,
+            proxmox_password_env_var: Annotated[
+                str | None,
+                typer.Option(
+                    "--proxmox-password-env-var",
+                    help="Environment variable name containing the Proxmox VE user password. Used when no API token is configured.",
+                    rich_help_panel=PANEL_PROXMOX,
+                    hidden=PANEL_PROXMOX not in visible_panels,
+                ),
+            ] = None,
+            proxmox_verify_ssl: Annotated[
+                bool,
+                typer.Option(
+                    "--proxmox-verify-ssl/--no-proxmox-verify-ssl",
+                    help="Verify the TLS certificate of the Proxmox VE API.",
+                    rich_help_panel=PANEL_PROXMOX,
+                    hidden=PANEL_PROXMOX not in visible_panels,
+                ),
+            ] = True,
+            proxmox_enable_guest_agent: Annotated[
+                bool,
+                typer.Option(
+                    "--proxmox-enable-guest-agent",
+                    help="Collect OS and network details from the QEMU guest agent of running VMs. Increases sync time.",
+                    rich_help_panel=PANEL_PROXMOX,
+                    hidden=PANEL_PROXMOX not in visible_panels,
+                ),
+            ] = False,
             # =================================================================
             # GSuite Options
             # =================================================================
@@ -3313,6 +3392,22 @@ class CLI:
                 )
                 opsgenie_api_key = os.environ.get(opsgenie_api_key_env_var)
 
+            proxmox_token_value = None
+            if proxmox_token_value_env_var:
+                logger.debug(
+                    "Reading API token for Proxmox from environment variable %s",
+                    proxmox_token_value_env_var,
+                )
+                proxmox_token_value = os.environ.get(proxmox_token_value_env_var)
+
+            proxmox_password = None
+            if proxmox_password_env_var:
+                logger.debug(
+                    "Reading password for Proxmox from environment variable %s",
+                    proxmox_password_env_var,
+                )
+                proxmox_password = os.environ.get(proxmox_password_env_var)
+
             # Read CrowdStrike credentials
             crowdstrike_client_id = None
             if crowdstrike_client_id_env_var:
@@ -3994,6 +4089,14 @@ class CLI:
                 opsgenie_api_key=opsgenie_api_key,
                 opsgenie_api_url=opsgenie_api_url,
                 opsgenie_request_timeout=opsgenie_request_timeout,
+                proxmox_host=proxmox_host,
+                proxmox_port=proxmox_port,
+                proxmox_user=proxmox_user,
+                proxmox_token_name=proxmox_token_name,
+                proxmox_token_value=proxmox_token_value,
+                proxmox_password=proxmox_password,
+                proxmox_verify_ssl=proxmox_verify_ssl,
+                proxmox_enable_guest_agent=proxmox_enable_guest_agent,
                 nist_cve_url=nist_cve_url,
                 cve_enabled=cve_enabled,
                 cve_api_key=cve_api_key,

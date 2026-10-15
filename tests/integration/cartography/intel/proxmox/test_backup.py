@@ -47,12 +47,12 @@ def test_sync_backup_jobs(mock_get_jobs, neo4j_session):
         SET s1.name = 'nfs-backup', s1.lastupdated = $update_tag
         MERGE (s2:ProxmoxStorage {id: 'local'})
         SET s2.name = 'local', s2.lastupdated = $update_tag
-        MERGE (v1:ProxmoxVM {vmid: 100})
-        SET v1.id = 'node1:100', v1.name = 'test-vm-1', v1.lastupdated = $update_tag
-        MERGE (v2:ProxmoxVM {vmid: 101})
-        SET v2.id = 'node1:101', v2.name = 'test-vm-2', v2.lastupdated = $update_tag
-        MERGE (v3:ProxmoxVM {vmid: 200})
-        SET v3.id = 'node2:200', v3.name = 'test-container-1', v3.lastupdated = $update_tag
+        MERGE (v1:ProxmoxVM {id: 'node1/qemu/100'})
+        SET v1.vmid = 100, v1.cluster_id = 'test-cluster', v1.name = 'test-vm-1', v1.lastupdated = $update_tag
+        MERGE (v2:ProxmoxVM {id: 'node1/qemu/101'})
+        SET v2.vmid = 101, v2.cluster_id = 'test-cluster', v2.name = 'test-vm-2', v2.lastupdated = $update_tag
+        MERGE (v3:ProxmoxVM {id: 'node2/lxc/200'})
+        SET v3.vmid = 200, v3.cluster_id = 'test-cluster', v3.name = 'test-container-1', v3.lastupdated = $update_tag
         """,
         update_tag=TEST_UPDATE_TAG,
     )
@@ -93,7 +93,7 @@ def test_sync_backup_jobs(mock_get_jobs, neo4j_session):
             "ProxmoxCluster",
             "id",
             "RESOURCE",
-            rel_direction_right=True,
+            rel_direction_right=False,
         )
         == expected_rels
     )
@@ -119,22 +119,25 @@ def test_sync_backup_jobs(mock_get_jobs, neo4j_session):
     )
 
     # Assert - Backup job to VM relationships
-    result = neo4j_session.run(
-        """
-        MATCH (j:ProxmoxBackupJob)-[:BACKS_UP]->(v:ProxmoxVM)
-        RETURN j.id as job_id, v.vmid as vmid
-        ORDER BY job_id, vmid
-        """
+    # backup-weekly-full and backup-disabled select "all" guests at run time,
+    # so they have no explicit guest relationships.
+    expected_vm_rels = {
+        ("backup-containers", "node2/lxc/200"),
+        ("backup-daily-vms", "node1/qemu/100"),
+        ("backup-daily-vms", "node1/qemu/101"),
+    }
+    assert (
+        check_rels(
+            neo4j_session,
+            "ProxmoxBackupJob",
+            "id",
+            "ProxmoxVM",
+            "id",
+            "BACKS_UP",
+            rel_direction_right=True,
+        )
+        == expected_vm_rels
     )
-    job_vm_rels = [(r["job_id"], r["vmid"]) for r in result]
-    # backup-daily-vms backs up VMs 100 and 101
-    # backup-containers backs up container 200
-    # backup-weekly-full has "all" so no specific relationships
-    assert job_vm_rels == [
-        ("backup-containers", 200),
-        ("backup-daily-vms", 100),
-        ("backup-daily-vms", 101),
-    ]
 
     # Assert - Backup mode and compression are set correctly
     result = neo4j_session.run(

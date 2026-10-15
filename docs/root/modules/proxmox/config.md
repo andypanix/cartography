@@ -1,50 +1,64 @@
-## Proxmox Configuration
+# Proxmox Configuration
 
-Follow these steps to analyze Proxmox Virtual Environment infrastructure with Cartography.
+Cartography reads a Proxmox VE cluster through its REST API. Proxmox VE 7.0 or later is required.
 
-1. **Prepare your Proxmox credentials**
+## Authentication
 
-    Proxmox VE 7.0+ is required (tested with 8.x). Read-only access is sufficient - the `PVEAuditor` role is recommended.
+Cartography supports API tokens (recommended) and user passwords. Store the secret in an environment variable and pass the variable name to Cartography.
 
-### Option 1: API Token Authentication (Recommended)
+### API token
 
-1. Create an API token in Proxmox:
-    1. Navigate to **Datacenter → Permissions → API Tokens** in the Proxmox web interface.
-    1. Click **Add** to create a new token.
-    1. Set the user to `root@pam` (or another user with appropriate permissions).
-    1. Set the token name to `cartography`.
-    1. Uncheck **Privilege Separation** (or grant the `PVEAuditor` role separately).
-    1. Click **Add** and save the token value securely.
+1. In the Proxmox web interface, open **Datacenter** > **Permissions** > **API Tokens** and click **Add**.
+1. Select the user, for example `cartography@pve`, and set a token ID, for example `cartography`.
+1. Keep **Privilege Separation** enabled and grant the token the permissions listed below, or disable it so the token inherits the user's permissions.
+1. Copy the token secret. Proxmox shows it only once.
 
-1. Populate environment variables with the token name and value. You can pass the environment variable names via CLI with the `--proxmox-token-name-env-var` and `--proxmox-token-value-env-var` parameters.
+### Password
 
-    ```bash
-    export PROXMOX_TOKEN_NAME="cartography"
-    export PROXMOX_TOKEN_VALUE="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-    ```
+Use the password of a Proxmox user. Prefer an API token: a password grants the full rights of the user and cannot be scoped.
 
-### Option 2: Password Authentication
+## Required Permissions
 
-1. Populate an environment variable with the password. You can pass the environment variable name via CLI with the `--proxmox-password-env-var` parameter.
+Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It covers every endpoint Cartography reads:
 
-    ```bash
-    export PROXMOX_PASSWORD="your-password"
-    ```
+| Privilege | Used for |
+| --- | --- |
+| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall |
+| `VM.Audit` | VM and container configuration, guest firewall rules, backup jobs |
+| `Datastore.Audit` | Storage backends |
+| `Pool.Audit` | Resource pools |
 
-1. The Proxmox user or API token needs the following permissions:
+## Optional Permissions
 
-    - **VM.Audit**: Read VM and container configurations
-    - **Datastore.Audit**: Read storage information
-    - **Sys.Audit**: Read system and node information
+`--proxmox-enable-guest-agent` queries the QEMU guest agent of running VMs. This needs `VM.Monitor` on Proxmox VE 8, or `VM.GuestAgent.Audit` on Proxmox VE 9, which `PVEAuditor` does not include. Without it, Cartography logs the failure and syncs the VMs without guest agent data.
 
-    The built-in **PVEAuditor** role provides all necessary permissions for read-only access.
+## Configure Cartography
 
-1. Provide the Proxmox host using the `--proxmox-host` parameter and user using the `--proxmox-user` parameter (e.g., `root@pam`).
+| Option | Description |
+| --- | --- |
+| `--proxmox-host` | Proxmox VE host to sync, for example `proxmox.example.com`. Enables the module. |
+| `--proxmox-port` | API port. Default: `8006`. |
+| `--proxmox-user` | User including the realm, for example `cartography@pve`. Default: `root@pam`. |
+| `--proxmox-token-name` | API token ID, the part after `!`. Use with `--proxmox-token-value-env-var`. |
+| `--proxmox-token-value-env-var` | Name of the environment variable that holds the API token secret. |
+| `--proxmox-password-env-var` | Name of the environment variable that holds the user password. Used only when no API token is configured. |
+| `--proxmox-verify-ssl` / `--no-proxmox-verify-ssl` | Verify the TLS certificate of the API. Default: enabled. |
+| `--proxmox-enable-guest-agent` | Collect OS and network details from the QEMU guest agent. Increases sync time. Default: disabled. |
 
-1. [Optional] To use a custom port, use the `--proxmox-port` parameter (default is 8006).
+## Run Cartography
 
-1. [Optional] To disable SSL verification (not recommended for production), use the `--proxmox-verify-ssl false` parameter.
+```bash
+export PROXMOX_TOKEN_VALUE='<token-secret>'
+cartography \
+  --selected-modules proxmox \
+  --proxmox-host proxmox.example.com \
+  --proxmox-user cartography@pve \
+  --proxmox-token-name cartography \
+  --proxmox-token-value-env-var PROXMOX_TOKEN_VALUE
+```
 
-1. [Optional] To enable QEMU Guest Agent data collection (requires guest agent installed in VMs), use the `--proxmox-enable-guest-agent` flag.
+## Advanced Configuration
 
-1. [Optional] To sync multiple Proxmox clusters, run Cartography separately for each cluster. Each cluster will be represented as a separate `ProxmoxCluster` node in the graph.
+To sync several clusters, run Cartography once per cluster with a different `--proxmox-host`. Each run only cleans up data of the cluster it synced.
+
+Use `--no-proxmox-verify-ssl` only for clusters that still use the self-signed certificate created at installation.

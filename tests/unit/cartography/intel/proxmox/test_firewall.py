@@ -117,3 +117,16 @@ def test_transform_ipset_data():
     assert ipset_node["id"] == "node:node1:management-ips"
     assert ipset_node["scope"] == "node"
     assert ipset_node["scope_id"] == "node1"
+
+
+def test_transform_firewall_rule_data_sets_scope_targets():
+    """Node and guest rules point at their node or VM; cluster rules point at neither."""
+    rules = [{"pos": 0, "type": "in", "action": "ACCEPT"}]
+
+    cluster_rule = transform_firewall_rule_data(rules, "c", "cluster")[0]
+    node_rule = transform_firewall_rule_data(rules, "c", "node", "node1")[0]
+    vm_rule = transform_firewall_rule_data(rules, "c", "vm", "100")[0]
+
+    assert (cluster_rule["target_node_id"], cluster_rule["target_vmid"]) == (None, None)
+    assert (node_rule["target_node_id"], node_rule["target_vmid"]) == ("node1", None)
+    assert (vm_rule["target_node_id"], vm_rule["target_vmid"]) == (None, 100)

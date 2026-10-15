@@ -90,7 +90,7 @@ def test_sync_cluster_and_nodes(
             "ProxmoxCluster",
             "id",
             "RESOURCE",
-            rel_direction_right=True,
+            rel_direction_right=False,
         )
         == expected_rels
     )
@@ -194,7 +194,7 @@ def test_sync_node_network_interfaces(
             "ProxmoxCluster",
             "id",
             "RESOURCE",
-            rel_direction_right=True,
+            rel_direction_right=False,
         )
         == expected_cluster_rels
     )

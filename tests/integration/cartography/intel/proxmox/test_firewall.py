@@ -146,7 +146,7 @@ def test_sync_firewall(
     # Assert - Firewall rule to cluster relationships
     result = neo4j_session.run(
         """
-        MATCH (rule:ProxmoxFirewallRule)-[:RESOURCE]->(c:ProxmoxCluster)
+        MATCH (c:ProxmoxCluster)-[:RESOURCE]->(rule:ProxmoxFirewallRule)
         RETURN count(rule) as count
         """
     )

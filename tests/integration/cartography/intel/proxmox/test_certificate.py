@@ -93,7 +93,7 @@ def test_sync_certificates(mock_get_node_certs, neo4j_session):
             "ProxmoxCluster",
             "id",
             "RESOURCE",
-            rel_direction_right=True,
+            rel_direction_right=False,
         )
         == expected_cert_cluster_rels
     )

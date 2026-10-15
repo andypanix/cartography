@@ -45,12 +45,12 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
     # Create VMs for relationship tests
     neo4j_session.run(
         """
-        MERGE (v1:ProxmoxVM {vmid: 100})
-        SET v1.id = 'node1:100', v1.name = 'test-vm-1', v1.lastupdated = $update_tag
-        MERGE (v2:ProxmoxVM {vmid: 101})
-        SET v2.id = 'node1:101', v2.name = 'test-vm-2', v2.lastupdated = $update_tag
-        MERGE (v3:ProxmoxVM {vmid: 200})
-        SET v3.id = 'node2:200', v3.name = 'test-container-1', v3.lastupdated = $update_tag
+        MERGE (v1:ProxmoxVM {id: 'node1/qemu/100'})
+        SET v1.vmid = 100, v1.cluster_id = 'test-cluster', v1.name = 'test-vm-1', v1.lastupdated = $update_tag
+        MERGE (v2:ProxmoxVM {id: 'node1/qemu/101'})
+        SET v2.vmid = 101, v2.cluster_id = 'test-cluster', v2.name = 'test-vm-2', v2.lastupdated = $update_tag
+        MERGE (v3:ProxmoxVM {id: 'node2/lxc/200'})
+        SET v3.vmid = 200, v3.cluster_id = 'test-cluster', v3.name = 'test-container-1', v3.lastupdated = $update_tag
         """,
         update_tag=TEST_UPDATE_TAG,
     )
@@ -97,7 +97,7 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
             "ProxmoxCluster",
             "id",
             "RESOURCE",
-            rel_direction_right=True,
+            rel_direction_right=False,
         )
         == expected_group_rels
     )
@@ -116,7 +116,7 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
             "ProxmoxCluster",
             "id",
             "RESOURCE",
-            rel_direction_right=True,
+            rel_direction_right=False,
         )
         == expected_resource_rels
     )
@@ -141,19 +141,23 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
     )
 
     # Assert - HA resource to VM relationships
-    result = neo4j_session.run(
-        """
-        MATCH (ha:ProxmoxHAResource)-[:PROTECTS]->(v:ProxmoxVM)
-        RETURN ha.id as ha_id, v.vmid as vmid
-        ORDER BY ha_id
-        """
+    expected_vm_rels = {
+        ("vm:100", "node1/qemu/100"),
+        ("ct:200", "node2/lxc/200"),
+        ("vm:101", "node1/qemu/101"),
+    }
+    assert (
+        check_rels(
+            neo4j_session,
+            "ProxmoxHAResource",
+            "id",
+            "ProxmoxVM",
+            "id",
+            "PROTECTS",
+            rel_direction_right=True,
+        )
+        == expected_vm_rels
     )
-    ha_vm_rels = [(r["ha_id"], r["vmid"]) for r in result]
-    assert ha_vm_rels == [
-        ("ct:200", 200),
-        ("vm:100", 100),
-        ("vm:101", 101),
-    ]
 
     # Assert - HA group properties (Proxmox API returns 0/1, stored as integers in Neo4j)
     result = neo4j_session.run(

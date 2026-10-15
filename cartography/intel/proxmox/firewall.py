@@ -138,6 +138,13 @@ def transform_firewall_rule_data(
                 "comment": rule.get("comment"),
                 "macro": rule.get("macro"),
                 "log": rule.get("log"),
+                # Relationship targets: None unless the rule is scoped to a node or VM.
+                "target_node_id": scope_id if scope == "node" else None,
+                "target_vmid": (
+                    int(scope_id)
+                    if scope == "vm" and scope_id and scope_id.isdigit()
+                    else None
+                ),
             }
         )
 
@@ -251,67 +258,6 @@ def load_ipsets(
     )
 
 
-def load_firewall_scope_relationships(
-    neo4j_session: neo4j.Session,
-    rules: list[dict[str, Any]],
-    update_tag: int,
-) -> None:
-    """
-    Create relationships between firewall rules and their scope (node or VM).
-
-    :param neo4j_session: Neo4j session
-    :param rules: List of firewall rule dicts
-    :param update_tag: Sync timestamp
-    """
-    from cartography.client.core.tx import run_write_query
-
-    # Separate rules by scope
-    node_rules = [r for r in rules if r["scope"] == "node" and r["scope_id"]]
-    vm_rules = [r for r in rules if r["scope"] == "vm" and r["scope_id"]]
-
-    # Create relationships to nodes
-    if node_rules:
-        query = """
-        UNWIND $Rules as rule
-        MATCH (fr:ProxmoxFirewallRule{id: rule.id})
-        MATCH (n:ProxmoxNode{id: rule.scope_id})
-        MERGE (fr)-[r:APPLIES_TO_NODE]->(n)
-        ON CREATE SET r.firstseen = timestamp()
-        SET r.lastupdated = $UpdateTag
-        """
-        run_write_query(
-            neo4j_session,
-            query,
-            Rules=node_rules,
-            UpdateTag=update_tag,
-        )
-
-    # Create relationships to VMs
-    if vm_rules:
-        # Convert scope_id to int for VM matching
-        for rule in vm_rules:
-            if rule["scope_id"]:
-                try:
-                    rule["vmid_int"] = int(rule["scope_id"])
-                except ValueError:
-                    pass
-
-        query = """
-        UNWIND $Rules as rule
-        MATCH (fr:ProxmoxFirewallRule{id: rule.id})
-        MATCH (v:ProxmoxVM{vmid: rule.vmid_int})
-        MERGE (fr)-[r:APPLIES_TO_VM]->(v)
-        ON CREATE SET r.firstseen = timestamp()
-        SET r.lastupdated = $UpdateTag
-        """
-        run_write_query(
-            neo4j_session,
-            query,
-            Rules=vm_rules,
-            UpdateTag=update_tag,
-        )
-
-
 # ============================================================================
 # SYNC function - orchestrates Get → Transform → Load
 # ============================================================================
@@ -378,8 +324,5 @@ def sync(
     # LOAD - ingest to Neo4j
     load_firewall_rules(neo4j_session, all_rules, cluster_id, update_tag)
     load_ipsets(neo4j_session, all_ipsets, cluster_id, update_tag)
-
-    if all_rules:
-        load_firewall_scope_relationships(neo4j_session, all_rules, update_tag)
 
     logger.info(f"Synced {len(all_rules)} firewall rules and {len(all_ipsets)} IP sets")

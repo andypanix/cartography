@@ -10,6 +10,7 @@ from typing import Dict
 from typing import List
 
 import neo4j
+from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
 from cartography.models.proxmox.compute import ProxmoxDiskSchema
@@ -93,13 +94,24 @@ def get_guest_agent_info(
     :param proxmox_client: Proxmox API client
     :param node_name: Node name
     :param vmid: VM ID
-    :return: Guest agent data dict
-    :raises: Exception if API call fails
+    :return: Guest agent data dict, empty when the agent cannot be queried
     """
     guest_data: Dict[str, Any] = {}
 
-    # Get OS information
-    os_info = proxmox_client.nodes(node_name).qemu(vmid).agent("get-osinfo").get()
+    # Proxmox answers with an HTTP error when the agent is not installed, not
+    # running, or the caller lacks the guest agent privilege. That is expected
+    # for many VMs, so skip guest data for this VM instead of failing the sync.
+    try:
+        os_info = proxmox_client.nodes(node_name).qemu(vmid).agent("get-osinfo").get()
+    except ResourceException as e:
+        logger.debug(
+            "QEMU guest agent unavailable for VM %s on node %s: %s",
+            vmid,
+            node_name,
+            e,
+        )
+        return guest_data
+
     if os_info and "result" in os_info:
         result = os_info["result"]
         guest_data["guest_os_name"] = result.get("name") or result.get("id")
@@ -729,7 +741,11 @@ def sync(
             interfaces = extract_network_data(vm_config, full_vm_id)
 
             # Get guest agent data if enabled and VM is QEMU
-            if enable_guest_agent and vm["type"] == "qemu":
+            if (
+                enable_guest_agent
+                and vm["type"] == "qemu"
+                and vm.get("status") == "running"
+            ):
                 guest_data = get_guest_agent_info(proxmox_client, node_name, vm["vmid"])
                 vm.update(guest_data)
 

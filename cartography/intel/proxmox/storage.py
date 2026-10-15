@@ -146,54 +146,6 @@ def load_storage(
     )
 
 
-def load_storage_node_relationships(
-    neo4j_session: neo4j.Session,
-    storage_list: List[Dict[str, Any]],
-    update_tag: int,
-) -> None:
-    """
-    Create relationships between storage and nodes.
-
-    This creates many-to-many relationships between storage and nodes.
-    We handle this separately after storage load since it's a many-to-many mapping.
-
-    :param neo4j_session: Neo4j session
-    :param storage_list: List of transformed storage dicts
-    :param update_tag: Sync timestamp
-    """
-    from cartography.client.core.tx import run_write_query
-
-    # Flatten storage -> nodes into individual relationships
-    relationships = []
-    for storage in storage_list:
-        for node_name in storage["nodes"]:
-            relationships.append(
-                {
-                    "storage_id": storage["id"],
-                    "node_id": node_name,
-                }
-            )
-
-    if not relationships:
-        return
-
-    query = """
-    UNWIND $Relationships as rel
-    MATCH (s:ProxmoxStorage{id: rel.storage_id})
-    MATCH (n:ProxmoxNode{id: rel.node_id})
-    MERGE (s)-[r:AVAILABLE_ON]->(n)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $UpdateTag
-    """
-
-    run_write_query(
-        neo4j_session,
-        query,
-        Relationships=relationships,
-        UpdateTag=update_tag,
-    )
-
-
 # ============================================================================
 # SYNC function
 # ============================================================================
@@ -237,6 +189,5 @@ def sync(
 
     # LOAD - ingest to Neo4j
     load_storage(neo4j_session, transformed_storage, cluster_id, update_tag)
-    load_storage_node_relationships(neo4j_session, transformed_storage, update_tag)
 
     logger.info(f"Synced {len(transformed_storage)} storage resources")
