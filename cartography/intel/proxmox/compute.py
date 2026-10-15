@@ -13,6 +13,7 @@ import neo4j
 from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
+from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.models.proxmox.compute import ProxmoxDiskSchema
 from cartography.models.proxmox.compute import ProxmoxNetworkInterfaceSchema
 from cartography.models.proxmox.compute import ProxmoxVMSchema
@@ -161,7 +162,10 @@ def transform_vm_data(
     transformed_vms = []
 
     for vm in vms:
-        vm_id = f"{vm['node']}/{vm['type']}/{vm['vmid']}"
+        vm_id = cluster_scoped_id(
+            cluster_id,
+            f"{vm['node']}/{vm['type']}/{vm['vmid']}",
+        )
 
         # Parse tags if they exist
         tags = []
@@ -179,6 +183,7 @@ def transform_vm_data(
                 "vmid": vm["vmid"],
                 "name": vm.get("name", ""),
                 "node": vm["node"],
+                "node_id": cluster_scoped_id(cluster_id, vm["node"]),
                 "cluster_id": cluster_id,
                 "type": vm["type"],
                 "status": vm.get("status"),
@@ -245,12 +250,17 @@ def transform_vm_data(
     return transformed_vms
 
 
-def extract_disk_data(vm_config: Dict[str, Any], vmid: str) -> List[Dict[str, Any]]:
+def extract_disk_data(
+    vm_config: Dict[str, Any],
+    vmid: str,
+    cluster_id: str,
+) -> List[Dict[str, Any]]:
     """
     Extract disk configurations from VM config.
 
     :param vm_config: VM configuration dict
-    :param vmid: Full VM ID (node/type/vmid format, e.g. "node1/qemu/100")
+    :param vmid: VM ID inside the cluster (node/type/vmid format, e.g. "node1/qemu/100")
+    :param cluster_id: Parent cluster ID, used to prefix graph IDs
     :return: List of disk dicts
     """
     disks = []
@@ -287,13 +297,20 @@ def extract_disk_data(vm_config: Dict[str, Any], vmid: str) -> List[Dict[str, An
             vmid_int = int(vmid.split("/")[-1])
 
             disk_data = {
-                "id": f"{vmid}:{key}",  # Full ID with node/type/vmid prefix
+                "id": cluster_scoped_id(cluster_id, f"{vmid}:{key}"),
                 "disk_id": key,
-                "vmid": vmid_int,  # Integer vmid for matching relationships
+                "vmid": vmid_int,
+                "cluster_id": cluster_id,
+                "vm_id": cluster_scoped_id(cluster_id, vmid),
+                "storage_id": None,
             }
 
             if ":" in disk_path:
                 disk_data["storage"] = disk_path.split(":")[0]
+                disk_data["storage_id"] = cluster_scoped_id(
+                    cluster_id,
+                    disk_data["storage"],
+                )
 
             # Parse parameters
             is_cdrom = False
@@ -406,12 +423,17 @@ def extract_disk_data(vm_config: Dict[str, Any], vmid: str) -> List[Dict[str, An
     return disks
 
 
-def extract_network_data(vm_config: Dict[str, Any], vmid: str) -> List[Dict[str, Any]]:
+def extract_network_data(
+    vm_config: Dict[str, Any],
+    vmid: str,
+    cluster_id: str,
+) -> List[Dict[str, Any]]:
     """
     Extract network interface configurations from VM config.
 
     :param vm_config: VM configuration dict
-    :param vmid: Full VM ID (node/type/vmid format, e.g. "node1/qemu/100")
+    :param vmid: VM ID inside the cluster (node/type/vmid format, e.g. "node1/qemu/100")
+    :param cluster_id: Parent cluster ID, used to prefix graph IDs
     :return: List of network interface dicts
     """
     interfaces = []
@@ -426,9 +448,11 @@ def extract_network_data(vm_config: Dict[str, Any], vmid: str) -> List[Dict[str,
                 vmid_int = int(vmid.split("/")[-1])
 
                 nic_data = {
-                    "id": f"{vmid}:{key}",  # Full ID with node/type/vmid prefix
+                    "id": cluster_scoped_id(cluster_id, f"{vmid}:{key}"),
                     "net_id": key,
-                    "vmid": vmid_int,  # Integer vmid for matching relationships
+                    "vmid": vmid_int,
+                    "cluster_id": cluster_id,
+                    "vm_id": cluster_scoped_id(cluster_id, vmid),
                 }
 
                 parts = value.split(",")
@@ -735,10 +759,11 @@ def sync(
             )
 
             # Extract disks and network interfaces
-            # Build full VM ID for child resources (node/type/vmid format)
-            full_vm_id = f"{vm['node']}/{vm['type']}/{vm['vmid']}"
-            disks = extract_disk_data(vm_config, full_vm_id)
-            interfaces = extract_network_data(vm_config, full_vm_id)
+            # VM ID inside the cluster (node/type/vmid format); the extract
+            # functions prefix it with the cluster ID.
+            vm_path = f"{vm['node']}/{vm['type']}/{vm['vmid']}"
+            disks = extract_disk_data(vm_config, vm_path, cluster_id)
+            interfaces = extract_network_data(vm_config, vm_path, cluster_id)
 
             # Get guest agent data if enabled and VM is QEMU
             if (

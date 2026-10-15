@@ -10,6 +10,7 @@ from typing import Any
 import neo4j
 
 from cartography.client.core.tx import load
+from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.models.proxmox.pool import ProxmoxPoolSchema
 from cartography.util import timeit
 
@@ -51,14 +52,18 @@ def get_pool_details(proxmox_client: Any, poolid: str) -> dict[str, Any]:
 # ============================================================================
 
 
-def _pool_member_ids(members: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+def _pool_member_ids(
+    members: list[dict[str, Any]],
+    cluster_id: str,
+) -> tuple[list[str], list[str]]:
     """
     Split pool members into guest IDs and storage IDs.
 
-    Guest IDs use the node/type/vmid form of ProxmoxVM IDs, so a member only
-    matches the guest on its own node.
+    Guest IDs use the cluster_id/node/type/vmid form of ProxmoxVM IDs, so a
+    member only matches the guest on its own node and cluster.
 
     :param members: Members of one pool, as returned by the pool details API
+    :param cluster_id: Parent cluster ID, used to prefix graph IDs
     :return: Tuple of (guest IDs, storage IDs)
     """
     vm_ids = []
@@ -69,9 +74,11 @@ def _pool_member_ids(members: list[dict[str, Any]]) -> tuple[list[str], list[str
             node = member.get("node")
             vmid = member.get("vmid")
             if node and vmid is not None:
-                vm_ids.append(f"{node}/{member_type}/{vmid}")
+                vm_ids.append(
+                    cluster_scoped_id(cluster_id, f"{node}/{member_type}/{vmid}"),
+                )
         elif member_type == "storage" and member.get("storage"):
-            storage_ids.append(member["storage"])
+            storage_ids.append(cluster_scoped_id(cluster_id, member["storage"]))
     return vm_ids, storage_ids
 
 
@@ -99,11 +106,11 @@ def transform_pool_data(
         # Required field - use direct access
         poolid = pool["poolid"]
         members = pool_details.get(poolid, {}).get("members", [])
-        vm_ids, storage_ids = _pool_member_ids(members)
+        vm_ids, storage_ids = _pool_member_ids(members, cluster_id)
 
         transformed_pools.append(
             {
-                "id": poolid,
+                "id": cluster_scoped_id(cluster_id, poolid),
                 "poolid": poolid,
                 "comment": pool.get("comment"),
                 "cluster_id": cluster_id,

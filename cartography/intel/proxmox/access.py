@@ -10,6 +10,7 @@ from typing import Any
 import neo4j
 
 from cartography.client.core.tx import load
+from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.models.proxmox.access import ProxmoxACLSchema
 from cartography.models.proxmox.access import ProxmoxGroupSchema
 from cartography.models.proxmox.access import ProxmoxRoleSchema
@@ -156,7 +157,7 @@ def transform_user_data(
 
         transformed_users.append(
             {
-                "id": userid,
+                "id": cluster_scoped_id(cluster_id, userid),
                 "userid": userid,
                 "cluster_id": cluster_id,
                 "enable": bool(user.get("enable", True)),
@@ -166,6 +167,7 @@ def transform_user_data(
                 "email": user.get("email"),
                 "comment": user.get("comment"),
                 "groups": groups,
+                "group_ids": [cluster_scoped_id(cluster_id, g) for g in groups],
                 "tokens": tokens,
             }
         )
@@ -192,7 +194,7 @@ def transform_group_data(
 
         transformed_groups.append(
             {
-                "id": groupid,
+                "id": cluster_scoped_id(cluster_id, groupid),
                 "groupid": groupid,
                 "cluster_id": cluster_id,
                 "comment": group.get("comment"),
@@ -227,7 +229,7 @@ def transform_role_data(
 
         transformed_roles.append(
             {
-                "id": roleid,
+                "id": cluster_scoped_id(cluster_id, roleid),
                 "roleid": roleid,
                 "cluster_id": cluster_id,
                 "privs": privs,
@@ -292,7 +294,7 @@ def transform_acl_data(
         ugid = acl["ugid"]  # User or group ID
 
         # Create unique ID from path + ugid + roleid
-        acl_id = f"{path}:{ugid}:{roleid}"
+        acl_id = cluster_scoped_id(cluster_id, f"{path}:{ugid}:{roleid}")
 
         # Determine principal type and extract base user ID for tokens
         # Proxmox format: groups don't have @, users are user@realm, tokens are user@realm!tokenname
@@ -308,9 +310,11 @@ def transform_acl_data(
         resource_type, resource_id = _parse_acl_path(path)
 
         def _target(kind: str) -> str | None:
-            return resource_id if resource_type == kind else None
+            if resource_type != kind or not resource_id:
+                return None
+            return cluster_scoped_id(cluster_id, resource_id)
 
-        vm_id = _target("vm")
+        vm_id = resource_id if resource_type == "vm" else None
 
         transformed_acls.append(
             {
@@ -326,8 +330,17 @@ def transform_acl_data(
                 "resource_id": resource_id,
                 # Relationship targets: each is None unless the ACL names that
                 # kind of principal or resource, so only one edge per kind matches.
-                "target_user_id": base_userid if principal_type == "user" else None,
-                "target_group_id": ugid if principal_type == "group" else None,
+                "target_role_id": cluster_scoped_id(cluster_id, roleid),
+                "target_user_id": (
+                    cluster_scoped_id(cluster_id, base_userid)
+                    if principal_type == "user"
+                    else None
+                ),
+                "target_group_id": (
+                    cluster_scoped_id(cluster_id, ugid)
+                    if principal_type == "group"
+                    else None
+                ),
                 "target_vmid": int(vm_id) if vm_id and vm_id.isdigit() else None,
                 "target_storage_id": _target("storage"),
                 "target_pool_id": _target("pool"),

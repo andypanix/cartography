@@ -37,7 +37,7 @@ def test_transform_firewall_rule_data():
 
     # Test first rule
     rule1 = result[0]
-    assert rule1["id"] == "cluster:0"
+    assert rule1["id"] == "test-cluster/cluster:0"
     assert rule1["scope"] == "cluster"
     assert rule1["scope_id"] is None
     assert rule1["pos"] == 0
@@ -51,7 +51,7 @@ def test_transform_firewall_rule_data():
 
     # Test second rule
     rule2 = result[1]
-    assert rule2["id"] == "cluster:1"
+    assert rule2["id"] == "test-cluster/cluster:1"
     assert rule2["enable"] is False
     assert rule2["action"] == "DROP"
 
@@ -59,7 +59,7 @@ def test_transform_firewall_rule_data():
     result_node = transform_firewall_rule_data(raw_rules, cluster_id, "node", "node1")
 
     rule_node = result_node[0]
-    assert rule_node["id"] == "node:node1:0"
+    assert rule_node["id"] == "test-cluster/node:node1:0"
     assert rule_node["scope"] == "node"
     assert rule_node["scope_id"] == "node1"
 
@@ -95,7 +95,7 @@ def test_transform_ipset_data():
 
     # Test management-ips
     mgmt = next(s for s in result if s["name"] == "management-ips")
-    assert mgmt["id"] == "cluster:management-ips"
+    assert mgmt["id"] == "test-cluster/cluster:management-ips"
     assert mgmt["scope"] == "cluster"
     assert mgmt["scope_id"] is None
     assert mgmt["comment"] == "Management network"
@@ -104,7 +104,7 @@ def test_transform_ipset_data():
 
     # Test backup-servers
     backup = next(s for s in result if s["name"] == "backup-servers")
-    assert backup["id"] == "cluster:backup-servers"
+    assert backup["id"] == "test-cluster/cluster:backup-servers"
     assert backup["comment"] is None
     assert backup["cidrs"] == ["192.168.10.5/32"]
 
@@ -114,7 +114,7 @@ def test_transform_ipset_data():
     )
 
     ipset_node = result_node[0]
-    assert ipset_node["id"] == "node:node1:management-ips"
+    assert ipset_node["id"] == "test-cluster/node:node1:management-ips"
     assert ipset_node["scope"] == "node"
     assert ipset_node["scope_id"] == "node1"
 
@@ -128,5 +128,5 @@ def test_transform_firewall_rule_data_sets_scope_targets():
     vm_rule = transform_firewall_rule_data(rules, "c", "vm", "100")[0]
 
     assert (cluster_rule["target_node_id"], cluster_rule["target_vmid"]) == (None, None)
-    assert (node_rule["target_node_id"], node_rule["target_vmid"]) == ("node1", None)
+    assert (node_rule["target_node_id"], node_rule["target_vmid"]) == ("c/node1", None)
     assert (vm_rule["target_node_id"], vm_rule["target_vmid"]) == (None, 100)

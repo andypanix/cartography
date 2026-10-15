@@ -10,6 +10,7 @@ from typing import Any
 import neo4j
 
 from cartography.client.core.tx import load
+from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.models.proxmox.ha import ProxmoxHAGroupSchema
 from cartography.models.proxmox.ha import ProxmoxHAResourceSchema
 from cartography.util import timeit
@@ -74,7 +75,7 @@ def transform_ha_group_data(
 
         transformed_groups.append(
             {
-                "id": group_name,
+                "id": cluster_scoped_id(cluster_id, group_name),
                 "group": group_name,
                 "cluster_id": cluster_id,
                 "nodes": group.get("nodes"),
@@ -119,11 +120,16 @@ def transform_ha_resource_data(
 
         transformed_resources.append(
             {
-                "id": sid,
+                "id": cluster_scoped_id(cluster_id, sid),
                 "sid": sid,
                 "cluster_id": cluster_id,
                 "state": resource.get("state"),
                 "group": resource.get("group"),
+                "group_id": (
+                    cluster_scoped_id(cluster_id, resource["group"])
+                    if resource.get("group")
+                    else None
+                ),
                 "max_restart": resource.get("max_restart"),
                 "max_relocate": resource.get("max_relocate"),
                 "comment": resource.get("comment"),

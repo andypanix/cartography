@@ -10,6 +10,7 @@ from typing import Any
 import neo4j
 
 from cartography.client.core.tx import load
+from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.models.proxmox.firewall import ProxmoxFirewallIPSetSchema
 from cartography.models.proxmox.firewall import ProxmoxFirewallRuleSchema
 from cartography.util import timeit
@@ -118,6 +119,7 @@ def transform_firewall_rule_data(
             rule_id = f"{scope}:{scope_id}:{rule.get('pos', 0)}"
         else:
             rule_id = f"{scope}:{rule.get('pos', 0)}"
+        rule_id = cluster_scoped_id(cluster_id, rule_id)
 
         transformed_rules.append(
             {
@@ -139,7 +141,11 @@ def transform_firewall_rule_data(
                 "macro": rule.get("macro"),
                 "log": rule.get("log"),
                 # Relationship targets: None unless the rule is scoped to a node or VM.
-                "target_node_id": scope_id if scope == "node" else None,
+                "target_node_id": (
+                    cluster_scoped_id(cluster_id, scope_id)
+                    if scope == "node" and scope_id
+                    else None
+                ),
                 "target_vmid": (
                     int(scope_id)
                     if scope == "vm" and scope_id and scope_id.isdigit()
@@ -179,6 +185,7 @@ def transform_ipset_data(
             ipset_id = f"{scope}:{scope_id}:{name}"
         else:
             ipset_id = f"{scope}:{name}"
+        ipset_id = cluster_scoped_id(cluster_id, ipset_id)
 
         # Get CIDR entries for this IP set
         cidrs = []

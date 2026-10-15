@@ -13,12 +13,15 @@ from cartography.models.core.relationships import TargetNodeMatcher
 
 @dataclass(frozen=True)
 class ProxmoxBackupJobNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef("id", description="Backup job ID.")
+    id: PropertyRef = PropertyRef(
+        "id",
+        description="Backup job ID in the form cluster_id/job_id.",
+    )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     job_id: PropertyRef = PropertyRef(
         "job_id",
         extra_index=True,
-        description="Backup job ID.",
+        description="Backup job ID as returned by the Proxmox VE API.",
     )
     cluster_id: PropertyRef = PropertyRef(
         "cluster_id",
@@ -30,7 +33,7 @@ class ProxmoxBackupJobNodeProperties(CartographyNodeProperties):
     )
     storage: PropertyRef = PropertyRef(
         "storage",
-        description="ID of the storage the backups are written to.",
+        description="Name of the storage the backups are written to.",
     )
     enabled: PropertyRef = PropertyRef(
         "enabled",
@@ -117,7 +120,7 @@ class ProxmoxBackupJobToStorageRel(CartographyRelSchema):
 
     target_node_label: str = "ProxmoxStorage"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {"id": PropertyRef("storage")},
+        {"id": PropertyRef("storage_id")},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "BACKS_UP_TO"

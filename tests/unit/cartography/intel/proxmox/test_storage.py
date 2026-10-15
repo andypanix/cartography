@@ -57,22 +57,22 @@ def test_transform_storage_data():
     assert len(result) == 3
 
     # Test local storage
-    local = next(s for s in result if s["id"] == "local")
-    assert local["name"] == "local"
+    local = next(s for s in result if s["name"] == "local")
+    assert local["id"] == "test-cluster/local"
     assert local["type"] == "dir"
     assert local["content_types"] == ["iso", "vztmpl", "backup"]
     assert local["shared"] is False
     assert local["enabled"] is True
     assert local["total"] == 1099511627776
-    assert set(local["nodes"]) == {"node1", "node2"}
+    assert set(local["node_ids"]) == {"test-cluster/node1", "test-cluster/node2"}
 
     # Test LVM-thin storage
-    lvm = next(s for s in result if s["id"] == "local-lvm")
+    lvm = next(s for s in result if s["name"] == "local-lvm")
     assert lvm["type"] == "lvmthin"
     assert lvm["content_types"] == ["images", "rootdir"]
 
     # Test NFS storage with explicit nodes
-    nfs = next(s for s in result if s["id"] == "nfs-share")
+    nfs = next(s for s in result if s["name"] == "nfs-share")
     assert nfs["type"] == "nfs"
     assert nfs["shared"] is True
-    assert set(nfs["nodes"]) == {"node1", "node2"}
+    assert set(nfs["node_ids"]) == {"test-cluster/node1", "test-cluster/node2"}

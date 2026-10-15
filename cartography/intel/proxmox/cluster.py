@@ -13,6 +13,7 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
+from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.models.proxmox.cluster import ProxmoxClusterSchema
 from cartography.models.proxmox.cluster import ProxmoxNodeNetworkInterfaceSchema
 from cartography.models.proxmox.cluster import ProxmoxNodeSchema
@@ -285,7 +286,7 @@ def transform_node_data(
         # Use direct access for required fields, .get() for optional
         transformed_nodes.append(
             {
-                "id": node["node"],  # Required - API-provided ID
+                "id": cluster_scoped_id(cluster_id, node["node"]),
                 "name": node["node"],  # Required
                 "cluster_id": cluster_id,  # Required
                 "hostname": node["node"],  # Use node name as hostname
@@ -344,13 +345,15 @@ def transform_node_network_data(
     for iface in network_interfaces:
         # Required field
         iface_name = iface["iface"]
-        iface_id = f"{node_name}:{iface_name}"
+        iface_id = cluster_scoped_id(cluster_id, f"{node_name}:{iface_name}")
 
         transformed_interfaces.append(
             {
                 "id": iface_id,
                 "name": iface_name,
+                "cluster_id": cluster_id,
                 "node_name": node_name,
+                "node_id": cluster_scoped_id(cluster_id, node_name),
                 "type": iface.get("type"),  # bridge, bond, eth, vlan, etc.
                 "address": iface.get("address"),
                 "netmask": iface.get("netmask"),
@@ -441,8 +444,6 @@ def load_node_networks(
     """
     if not network_interfaces:
         return
-
-    from cartography.models.proxmox.cluster import ProxmoxNodeNetworkInterfaceSchema
 
     load(
         neo4j_session,

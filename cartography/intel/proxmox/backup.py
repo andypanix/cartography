@@ -10,6 +10,7 @@ from typing import Any
 import neo4j
 
 from cartography.client.core.tx import load
+from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.models.proxmox.backup import ProxmoxBackupJobSchema
 from cartography.util import timeit
 
@@ -101,11 +102,16 @@ def transform_backup_job_data(
 
         transformed_jobs.append(
             {
-                "id": job_id,
+                "id": cluster_scoped_id(cluster_id, job_id),
                 "job_id": job_id,
                 "cluster_id": cluster_id,
                 "schedule": job.get("schedule"),
                 "storage": job.get("storage"),
+                "storage_id": (
+                    cluster_scoped_id(cluster_id, job["storage"])
+                    if job.get("storage")
+                    else None
+                ),
                 "enabled": job.get("enabled", True),
                 "mode": job.get("mode", "snapshot"),
                 "compression": job.get("compress"),

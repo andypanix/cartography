@@ -246,15 +246,18 @@ def test_resync_removes_stale_relationships(neo4j_session):
 
     # Assert - the edges under test exist after the first sync
     assert _rels(neo4j_session, "ProxmoxPool", "CONTAINS_VM", ("ProxmoxVM",)) == {
-        ("development", "node1/qemu/101"),
-        ("production", "node1/qemu/100"),
-        ("production", "node2/lxc/200"),
+        ("test-cluster/development", "test-cluster/node1/qemu/101"),
+        ("test-cluster/production", "test-cluster/node1/qemu/100"),
+        ("test-cluster/production", "test-cluster/node2/lxc/200"),
     }
     assert _rels(
         neo4j_session, "ProxmoxACL", "GRANTS_ACCESS_TO", ("ProxmoxVM", "ProxmoxNode")
     ) == {
-        ("/vms/100:readonly@pam:CustomRole", "node1/qemu/100"),
-        ("/nodes/node1:operators:PVEAuditor", "node1"),
+        (
+            "test-cluster//vms/100:readonly@pam:CustomRole",
+            "test-cluster/node1/qemu/100",
+        ),
+        ("test-cluster//nodes/node1:operators:PVEAuditor", "test-cluster/node1"),
     }
     users_before = _rels(
         neo4j_session, "ProxmoxUser", "HAS_PERMISSION", PERMISSION_TARGET_LABELS
@@ -263,18 +266,21 @@ def test_resync_removes_stale_relationships(neo4j_session):
         neo4j_session, "ProxmoxGroup", "HAS_PERMISSION", PERMISSION_TARGET_LABELS
     )
     assert {
-        ("readonly@pam", "node1/qemu/100"),
-        ("root@pam", "node1"),  # Inherited through the operators group
+        ("test-cluster/readonly@pam", "test-cluster/node1/qemu/100"),
+        (
+            "test-cluster/root@pam",
+            "test-cluster/node1",
+        ),  # Inherited through the operators group
     } <= users_before
-    assert ("operators", "node1") in groups_before
+    assert ("test-cluster/operators", "test-cluster/node1") in groups_before
 
     # Act - second sync with a later update tag
     _run_ingestion(neo4j_session, 2, shrunk_pool_details, shrunk_acls)
 
     # Assert - the guest that left the pool is no longer contained in it
     assert _rels(neo4j_session, "ProxmoxPool", "CONTAINS_VM", ("ProxmoxVM",)) == {
-        ("development", "node1/qemu/101"),
-        ("production", "node1/qemu/100"),
+        ("test-cluster/development", "test-cluster/node1/qemu/101"),
+        ("test-cluster/production", "test-cluster/node1/qemu/100"),
     }
 
     # Assert - the removed ACLs no longer grant access
@@ -292,12 +298,12 @@ def test_resync_removes_stale_relationships(neo4j_session):
     assert _rels(
         neo4j_session, "ProxmoxUser", "HAS_PERMISSION", PERMISSION_TARGET_LABELS
     ) == users_before - {
-        ("readonly@pam", "node1/qemu/100"),
-        ("root@pam", "node1"),
+        ("test-cluster/readonly@pam", "test-cluster/node1/qemu/100"),
+        ("test-cluster/root@pam", "test-cluster/node1"),
     }
     assert _rels(
         neo4j_session, "ProxmoxGroup", "HAS_PERMISSION", PERMISSION_TARGET_LABELS
-    ) == groups_before - {("operators", "node1")}
+    ) == groups_before - {("test-cluster/operators", "test-cluster/node1")}
 
 
 def test_guest_relationships_stay_in_their_cluster(neo4j_session):
@@ -312,7 +318,7 @@ def test_guest_relationships_stay_in_their_cluster(neo4j_session):
         """
         UNWIND [['cluster-a', 'a1'], ['cluster-b', 'b1']] AS c
         MERGE (cluster:ProxmoxCluster {id: c[0]})
-        MERGE (vm:ProxmoxVM {id: c[1] + '/qemu/100'})
+        MERGE (vm:ProxmoxVM {id: c[0] + '/' + c[1] + '/qemu/100'})
         SET vm.vmid = 100, vm.cluster_id = c[0]
         MERGE (cluster)-[:RESOURCE]->(vm)
         """,
@@ -366,12 +372,12 @@ def test_guest_relationships_stay_in_their_cluster(neo4j_session):
 
     # Assert - every vmid-matched edge reaches only cluster-a's guest
     expected = {
-        ("ProxmoxHAResource", "PROTECTS", "vm:100"),
-        ("ProxmoxBackupJob", "BACKS_UP", "nightly"),
-        ("ProxmoxACL", "GRANTS_ACCESS_TO", "/vms/100:ops@pve:PVEAuditor"),
-        ("ProxmoxFirewallRule", "APPLIES_TO_VM", "vm:100:0"),
+        ("ProxmoxHAResource", "PROTECTS", "cluster-a/vm:100"),
+        ("ProxmoxBackupJob", "BACKS_UP", "cluster-a/nightly"),
+        ("ProxmoxACL", "GRANTS_ACCESS_TO", "cluster-a//vms/100:ops@pve:PVEAuditor"),
+        ("ProxmoxFirewallRule", "APPLIES_TO_VM", "cluster-a/vm:100:0"),
     }
     for source_label, rel_label, source_id in expected:
         assert _rels(neo4j_session, source_label, rel_label, ("ProxmoxVM",)) == {
-            (source_id, "a1/qemu/100"),
+            (source_id, "cluster-a/a1/qemu/100"),
         }, rel_label

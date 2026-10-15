@@ -13,7 +13,10 @@ from cartography.models.core.relationships import TargetNodeMatcher
 
 @dataclass(frozen=True)
 class ProxmoxHAGroupNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef("id", description="HA group name.")
+    id: PropertyRef = PropertyRef(
+        "id",
+        description="HA group ID in the form cluster_id/group.",
+    )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     group: PropertyRef = PropertyRef(
         "group",
@@ -72,7 +75,7 @@ class ProxmoxHAGroupSchema(CartographyNodeSchema):
 class ProxmoxHAResourceNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef(
         "id",
-        description="HA resource service ID, such as vm:100 or ct:200.",
+        description="HA resource ID in the form cluster_id/sid, such as prod/vm:100.",
     )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     sid: PropertyRef = PropertyRef(
@@ -138,7 +141,7 @@ class ProxmoxHAResourceToHAGroupRel(CartographyRelSchema):
 
     target_node_label: str = "ProxmoxHAGroup"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {"group": PropertyRef("group")},
+        {"id": PropertyRef("group_id")},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "MEMBER_OF_HA_GROUP"

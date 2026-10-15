@@ -15,7 +15,7 @@ from cartography.models.core.relationships import TargetNodeMatcher
 class ProxmoxCertificateNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef(
         "id",
-        description="Certificate ID in the form node_name:filename.",
+        description="Certificate ID in the form cluster_id/node_name:filename.",
     )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     cluster_id: PropertyRef = PropertyRef(
@@ -101,7 +101,7 @@ class ProxmoxCertificateToNodeRel(CartographyRelSchema):
 
     target_node_label: str = "ProxmoxNode"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {"id": PropertyRef("node_name")},
+        {"id": PropertyRef("node_id")},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "HAS_CERTIFICATE"

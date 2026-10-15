@@ -40,7 +40,7 @@ def test_transform_certificate_data():
 
     # Test first certificate
     cert1 = result[0]
-    assert cert1["id"] == "node1:pveproxy-ssl.pem"
+    assert cert1["id"] == "test-cluster/node1:pveproxy-ssl.pem"
     assert cert1["node_name"] == "node1"
     assert cert1["cluster_id"] == cluster_id
     assert cert1["filename"] == "pveproxy-ssl.pem"
@@ -56,7 +56,7 @@ def test_transform_certificate_data():
 
     # Test second certificate with string SAN
     cert2 = result[1]
-    assert cert2["id"] == "node1:custom-cert.pem"
+    assert cert2["id"] == "test-cluster/node1:custom-cert.pem"
     assert cert2["san"] == ["DNS:node1.example.com", "IP:10.0.0.1"]
     assert cert2["public_key_type"] is None
     assert cert2["public_key_bits"] is None
@@ -78,7 +78,7 @@ def test_transform_certificate_data_missing_fields():
     assert len(result) == 1
 
     cert = result[0]
-    assert cert["id"] == "node1:unknown"
+    assert cert["id"] == "test-cluster/node1:unknown"
     assert cert["filename"] == "unknown"
     assert cert["fingerprint"] is None
     assert cert["issuer"] is None

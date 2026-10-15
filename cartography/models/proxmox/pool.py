@@ -13,7 +13,10 @@ from cartography.models.core.relationships import TargetNodeMatcher
 
 @dataclass(frozen=True)
 class ProxmoxPoolNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef("id", description="Pool ID.")
+    id: PropertyRef = PropertyRef(
+        "id",
+        description="Pool ID in the form cluster_id/poolid.",
+    )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     poolid: PropertyRef = PropertyRef(
         "poolid",

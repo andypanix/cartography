@@ -50,13 +50,14 @@ def test_transform_user_data():
 
     # Test root user (groups from user data string)
     root = next(u for u in result if u["userid"] == "root@pam")
-    assert root["id"] == "root@pam"
+    assert root["id"] == "test-cluster/root@pam"
     assert root["enable"] is True
     assert root["expire"] == 0
     assert root["firstname"] == "Root"
     assert root["lastname"] == "User"
     assert root["email"] == "root@example.com"
     assert root["groups"] == ["admins", "operators"]
+    assert root["group_ids"] == ["test-cluster/admins", "test-cluster/operators"]
     assert root["cluster_id"] == cluster_id
 
     # Test user with minimal fields (no groups)
@@ -92,7 +93,7 @@ def test_transform_group_data():
 
     # Test admins group
     admins = next(g for g in result if g["groupid"] == "admins")
-    assert admins["id"] == "admins"
+    assert admins["id"] == "test-cluster/admins"
     assert admins["comment"] == "Administrator group"
     assert admins["cluster_id"] == cluster_id
 
@@ -123,7 +124,7 @@ def test_transform_role_data():
 
     # Test Administrator role
     admin = next(r for r in result if r["roleid"] == "Administrator")
-    assert admin["id"] == "Administrator"
+    assert admin["id"] == "test-cluster/Administrator"
     assert admin["privs"] == ["VM.Allocate", "VM.Config", "Sys.Modify"]
     assert admin["special"] is True
     assert admin["cluster_id"] == cluster_id
@@ -176,9 +177,10 @@ def test_transform_acl_data():
 
     # Test root ACL with cluster resource type
     root_acl = next(a for a in result if a["ugid"] == "root@pam")
-    assert root_acl["id"] == "/:root@pam:Administrator"
+    assert root_acl["id"] == "test-cluster//:root@pam:Administrator"
     assert root_acl["path"] == "/"
     assert root_acl["roleid"] == "Administrator"
+    assert root_acl["target_role_id"] == "test-cluster/Administrator"
     assert root_acl["propagate"] is True
     assert root_acl["cluster_id"] == cluster_id
     assert root_acl["principal_type"] == "user"
@@ -187,7 +189,7 @@ def test_transform_acl_data():
 
     # Test group ACL with VM resource type
     group_acl = next(a for a in result if a["path"] == "/vms/100")
-    assert group_acl["id"] == "/vms/100:auditors:PVEAuditor"
+    assert group_acl["id"] == "test-cluster//vms/100:auditors:PVEAuditor"
     assert group_acl["path"] == "/vms/100"
     assert group_acl["propagate"] is False
     assert group_acl["principal_type"] == "group"
@@ -240,25 +242,27 @@ def test_transform_acl_data_sets_relationship_targets():
         for acl in result
     }
     assert targets == {
-        "/:root@pam:Administrator": {
-            "target_user_id": "root@pam",
+        "test-cluster//:root@pam:Administrator": {
+            "target_user_id": "test-cluster/root@pam",
             "target_cluster_id": "test-cluster",
         },
-        "/vms/100:ops@pve!ci:PVEAuditor": {
-            "target_user_id": "ops@pve",
+        "test-cluster//vms/100:ops@pve!ci:PVEAuditor": {
+            "target_user_id": "test-cluster/ops@pve",
             "target_vmid": 100,
         },
-        "/storage/local:auditors:PVEAuditor": {
-            "target_group_id": "auditors",
-            "target_storage_id": "local",
+        "test-cluster//storage/local:auditors:PVEAuditor": {
+            "target_group_id": "test-cluster/auditors",
+            "target_storage_id": "test-cluster/local",
         },
-        "/pool/production:auditors:PVEAuditor": {
-            "target_group_id": "auditors",
-            "target_pool_id": "production",
+        "test-cluster//pool/production:auditors:PVEAuditor": {
+            "target_group_id": "test-cluster/auditors",
+            "target_pool_id": "test-cluster/production",
         },
-        "/nodes/node1:auditors:PVEAuditor": {
-            "target_group_id": "auditors",
-            "target_node_id": "node1",
+        "test-cluster//nodes/node1:auditors:PVEAuditor": {
+            "target_group_id": "test-cluster/auditors",
+            "target_node_id": "test-cluster/node1",
         },
-        "/access:auditors:PVEAuditor": {"target_group_id": "auditors"},
+        "test-cluster//access:auditors:PVEAuditor": {
+            "target_group_id": "test-cluster/auditors",
+        },
     }

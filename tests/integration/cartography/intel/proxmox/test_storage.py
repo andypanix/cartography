@@ -48,9 +48,9 @@ def test_sync_storage(mock_get_storage, neo4j_session):
 
     # Assert - Check storage nodes
     expected_storage_nodes = {
-        ("local", "local", "dir", False),
-        ("local-lvm", "local-lvm", "lvmthin", False),
-        ("nfs-backup", "nfs-backup", "nfs", True),
+        (f"{TEST_CLUSTER_ID}/local", "local", "dir", False),
+        (f"{TEST_CLUSTER_ID}/local-lvm", "local-lvm", "lvmthin", False),
+        (f"{TEST_CLUSTER_ID}/nfs-backup", "nfs-backup", "nfs", True),
     }
     assert (
         check_nodes(neo4j_session, "ProxmoxStorage", ["id", "name", "type", "shared"])
@@ -59,9 +59,9 @@ def test_sync_storage(mock_get_storage, neo4j_session):
 
     # Assert - Check storage->cluster relationships
     expected_rels = {
-        ("local", TEST_CLUSTER_ID),
-        ("local-lvm", TEST_CLUSTER_ID),
-        ("nfs-backup", TEST_CLUSTER_ID),
+        (f"{TEST_CLUSTER_ID}/local", TEST_CLUSTER_ID),
+        (f"{TEST_CLUSTER_ID}/local-lvm", TEST_CLUSTER_ID),
+        (f"{TEST_CLUSTER_ID}/nfs-backup", TEST_CLUSTER_ID),
     }
     assert (
         check_rels(
@@ -111,7 +111,7 @@ def test_storage_properties(mock_get_storage, neo4j_session):
     # Assert - Check local storage properties
     result = neo4j_session.run(
         """
-        MATCH (s:ProxmoxStorage {id: 'local'})
+        MATCH (s:ProxmoxStorage {id: 'test-cluster/local'})
         RETURN s.name, s.type, s.content_types, s.shared, s.enabled
         """
     )
@@ -129,7 +129,7 @@ def test_storage_properties(mock_get_storage, neo4j_session):
     # Assert - Check NFS storage properties
     result = neo4j_session.run(
         """
-        MATCH (s:ProxmoxStorage {id: 'nfs-backup'})
+        MATCH (s:ProxmoxStorage {id: 'test-cluster/nfs-backup'})
         RETURN s.name, s.type, s.shared
         """
     )
@@ -151,8 +151,8 @@ def test_storage_node_relationships(mock_get_storage, neo4j_session):
     # First, create some mock nodes so we have something to relate to
     neo4j_session.run(
         """
-        MERGE (n1:ProxmoxNode {id: 'node1', name: 'node1'})
-        MERGE (n2:ProxmoxNode {id: 'node2', name: 'node2'})
+        MERGE (n1:ProxmoxNode {id: 'test-cluster/node1', name: 'node1'})
+        MERGE (n2:ProxmoxNode {id: 'test-cluster/node2', name: 'node2'})
         MERGE (c:ProxmoxCluster {id: $cluster_id})
         """,
         cluster_id=TEST_CLUSTER_ID,
@@ -184,7 +184,7 @@ def test_storage_node_relationships(mock_get_storage, neo4j_session):
         "AVAILABLE_ON",
         rel_direction_right=True,
     ) == {
-        (storage, node)
+        (f"{TEST_CLUSTER_ID}/{storage}", f"{TEST_CLUSTER_ID}/{node}")
         for storage in ("local", "local-lvm", "nfs-backup")
         for node in ("node1", "node2")
     }

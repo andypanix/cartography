@@ -45,11 +45,11 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
     # Create VMs for relationship tests
     neo4j_session.run(
         """
-        MERGE (v1:ProxmoxVM {id: 'node1/qemu/100'})
+        MERGE (v1:ProxmoxVM {id: 'test-cluster/node1/qemu/100'})
         SET v1.vmid = 100, v1.cluster_id = 'test-cluster', v1.name = 'test-vm-1', v1.lastupdated = $update_tag
-        MERGE (v2:ProxmoxVM {id: 'node1/qemu/101'})
+        MERGE (v2:ProxmoxVM {id: 'test-cluster/node1/qemu/101'})
         SET v2.vmid = 101, v2.cluster_id = 'test-cluster', v2.name = 'test-vm-2', v2.lastupdated = $update_tag
-        MERGE (v3:ProxmoxVM {id: 'node2/lxc/200'})
+        MERGE (v3:ProxmoxVM {id: 'test-cluster/node2/lxc/200'})
         SET v3.vmid = 200, v3.cluster_id = 'test-cluster', v3.name = 'test-container-1', v3.lastupdated = $update_tag
         """,
         update_tag=TEST_UPDATE_TAG,
@@ -66,8 +66,8 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
 
     # Assert - HA groups exist
     expected_groups = {
-        ("ha-group-1", "node1,node2"),
-        ("ha-group-2", "node2"),
+        ("test-cluster/ha-group-1", "node1,node2"),
+        ("test-cluster/ha-group-2", "node2"),
     }
     assert (
         check_nodes(neo4j_session, "ProxmoxHAGroup", ["id", "nodes"]) == expected_groups
@@ -75,9 +75,9 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
 
     # Assert - HA resources exist
     expected_resources = {
-        ("vm:100", "started"),
-        ("ct:200", "started"),
-        ("vm:101", "stopped"),
+        ("test-cluster/vm:100", "started"),
+        ("test-cluster/ct:200", "started"),
+        ("test-cluster/vm:101", "stopped"),
     }
     assert (
         check_nodes(neo4j_session, "ProxmoxHAResource", ["id", "state"])
@@ -86,8 +86,8 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
 
     # Assert - HA group to cluster relationships
     expected_group_rels = {
-        ("ha-group-1", TEST_CLUSTER_ID),
-        ("ha-group-2", TEST_CLUSTER_ID),
+        ("test-cluster/ha-group-1", TEST_CLUSTER_ID),
+        ("test-cluster/ha-group-2", TEST_CLUSTER_ID),
     }
     assert (
         check_rels(
@@ -104,9 +104,9 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
 
     # Assert - HA resource to cluster relationships
     expected_resource_rels = {
-        ("vm:100", TEST_CLUSTER_ID),
-        ("ct:200", TEST_CLUSTER_ID),
-        ("vm:101", TEST_CLUSTER_ID),
+        ("test-cluster/vm:100", TEST_CLUSTER_ID),
+        ("test-cluster/ct:200", TEST_CLUSTER_ID),
+        ("test-cluster/vm:101", TEST_CLUSTER_ID),
     }
     assert (
         check_rels(
@@ -123,9 +123,9 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
 
     # Assert - HA resource to HA group relationships
     expected_ha_group_rels = {
-        ("vm:100", "ha-group-1"),
-        ("ct:200", "ha-group-1"),
-        ("vm:101", "ha-group-2"),
+        ("test-cluster/vm:100", "test-cluster/ha-group-1"),
+        ("test-cluster/ct:200", "test-cluster/ha-group-1"),
+        ("test-cluster/vm:101", "test-cluster/ha-group-2"),
     }
     assert (
         check_rels(
@@ -142,9 +142,9 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
 
     # Assert - HA resource to VM relationships
     expected_vm_rels = {
-        ("vm:100", "node1/qemu/100"),
-        ("ct:200", "node2/lxc/200"),
-        ("vm:101", "node1/qemu/101"),
+        ("test-cluster/vm:100", "test-cluster/node1/qemu/100"),
+        ("test-cluster/ct:200", "test-cluster/node2/lxc/200"),
+        ("test-cluster/vm:101", "test-cluster/node1/qemu/101"),
     }
     assert (
         check_rels(
@@ -162,7 +162,7 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
     # Assert - HA group properties (Proxmox API returns 0/1, stored as integers in Neo4j)
     result = neo4j_session.run(
         """
-        MATCH (g:ProxmoxHAGroup {id: 'ha-group-2'})
+        MATCH (g:ProxmoxHAGroup {id: 'test-cluster/ha-group-2'})
         RETURN g.restricted as restricted, g.nofailback as nofailback
         """
     )

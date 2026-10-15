@@ -69,8 +69,8 @@ def test_sync_cluster_and_nodes(
 
     # Assert - Check node nodes
     expected_node_nodes = {
-        ("node1", "node1", "online"),
-        ("node2", "node2", "online"),
+        ("test-cluster/node1", "node1", "online"),
+        ("test-cluster/node2", "node2", "online"),
     }
     assert (
         check_nodes(neo4j_session, "ProxmoxNode", ["id", "name", "status"])
@@ -79,8 +79,8 @@ def test_sync_cluster_and_nodes(
 
     # Assert - Check node->cluster relationships
     expected_rels = {
-        ("node1", TEST_CLUSTER_ID),
-        ("node2", TEST_CLUSTER_ID),
+        ("test-cluster/node1", TEST_CLUSTER_ID),
+        ("test-cluster/node2", TEST_CLUSTER_ID),
     }
     assert (
         check_rels(
@@ -150,9 +150,9 @@ def test_sync_node_network_interfaces(
 
     # Assert - Check network interface nodes (sampling a few key ones)
     expected_interface_nodes = {
-        ("node1:vmbr0", "vmbr0", "bridge"),
-        ("node1:enp0s31f6", "enp0s31f6", "eth"),
-        ("node2:vmbr0", "vmbr0", "bridge"),
+        ("test-cluster/node1:vmbr0", "vmbr0", "bridge"),
+        ("test-cluster/node1:enp0s31f6", "enp0s31f6", "eth"),
+        ("test-cluster/node2:vmbr0", "vmbr0", "bridge"),
     }
     assert (
         check_nodes(
@@ -163,9 +163,9 @@ def test_sync_node_network_interfaces(
 
     # Assert - Check interface->node relationships
     expected_rels = {
-        ("node1:vmbr0", "node1"),
-        ("node1:enp0s31f6", "node1"),
-        ("node2:vmbr0", "node2"),
+        ("test-cluster/node1:vmbr0", "test-cluster/node1"),
+        ("test-cluster/node1:enp0s31f6", "test-cluster/node1"),
+        ("test-cluster/node2:vmbr0", "test-cluster/node2"),
     }
     assert (
         check_rels(
@@ -182,9 +182,9 @@ def test_sync_node_network_interfaces(
 
     # Assert - Check interface->cluster relationships
     expected_cluster_rels = {
-        ("node1:vmbr0", TEST_CLUSTER_ID),
-        ("node1:enp0s31f6", TEST_CLUSTER_ID),
-        ("node2:vmbr0", TEST_CLUSTER_ID),
+        ("test-cluster/node1:vmbr0", TEST_CLUSTER_ID),
+        ("test-cluster/node1:enp0s31f6", TEST_CLUSTER_ID),
+        ("test-cluster/node2:vmbr0", TEST_CLUSTER_ID),
     }
     assert (
         check_rels(
@@ -257,7 +257,7 @@ def test_network_interface_properties(
     # In this case, the IPv6 entry is last, so those properties will be stored.
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxNodeNetworkInterface {id: 'node1:vmbr0'})
+        MATCH (n:ProxmoxNodeNetworkInterface {id: 'test-cluster/node1:vmbr0'})
         RETURN n.address, n.gateway, n.netmask, n.address6, n.gateway6, n.netmask6
         """
     )
@@ -370,7 +370,7 @@ def test_node_enhanced_metadata(
     # Assert - Check enhanced node properties for node1
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxNode {id: 'node1'})
+        MATCH (n:ProxmoxNode {id: 'test-cluster/node1'})
         RETURN n.kversion, n.loadavg, n.wait, n.swap_total, n.swap_used,
                n.swap_free, n.pveversion, n.cpuinfo, n.idle
         """
@@ -442,7 +442,7 @@ def test_network_interface_enhanced_metadata(
     # Assert - Check enhanced network interface properties
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxNodeNetworkInterface {id: 'node1:vmbr0'})
+        MATCH (n:ProxmoxNodeNetworkInterface {id: 'test-cluster/node1:vmbr0'})
         RETURN n.mtu, n.comments, n.cidr, n.cidr6, n.method, n.method6
         """
     )

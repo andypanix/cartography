@@ -28,18 +28,18 @@ PERMISSION_TARGET_LABELS = (
 )
 
 EXPECTED_USER_PERMISSIONS = {
-    ("root@pam", TEST_CLUSTER_ID),
-    ("admin@pve", TEST_CLUSTER_ID),
-    ("readonly@pam", "node1/qemu/100"),
-    ("readonly@pam", "local-lvm"),
-    ("admin@pve", "production"),
-    ("root@pam", "node1"),
+    ("test-cluster/root@pam", TEST_CLUSTER_ID),
+    ("test-cluster/admin@pve", TEST_CLUSTER_ID),
+    ("test-cluster/readonly@pam", "test-cluster/node1/qemu/100"),
+    ("test-cluster/readonly@pam", "test-cluster/local-lvm"),
+    ("test-cluster/admin@pve", "test-cluster/production"),
+    ("test-cluster/root@pam", "test-cluster/node1"),
 }
 
 EXPECTED_GROUP_PERMISSIONS = {
-    ("admins", TEST_CLUSTER_ID),
-    ("auditors", "local-lvm"),
-    ("operators", "node1"),
+    ("test-cluster/admins", TEST_CLUSTER_ID),
+    ("test-cluster/auditors", "test-cluster/local-lvm"),
+    ("test-cluster/operators", "test-cluster/node1"),
 }
 
 
@@ -49,14 +49,14 @@ def _seed_acl_resources(neo4j_session) -> None:
         """
         MERGE (c:ProxmoxCluster {id: $cluster_id})
         SET c.name = $cluster_id, c.lastupdated = $update_tag
-        MERGE (vm:ProxmoxVM {id: 'node1/qemu/100'})
+        MERGE (vm:ProxmoxVM {id: 'test-cluster/node1/qemu/100'})
         SET vm.vmid = 100, vm.cluster_id = $cluster_id, vm.name = 'test-vm',
             vm.lastupdated = $update_tag
-        MERGE (s:ProxmoxStorage {id: 'local-lvm'})
+        MERGE (s:ProxmoxStorage {id: 'test-cluster/local-lvm'})
         SET s.name = 'local-lvm', s.lastupdated = $update_tag
-        MERGE (p:ProxmoxPool {id: 'production'})
+        MERGE (p:ProxmoxPool {id: 'test-cluster/production'})
         SET p.poolid = 'production', p.lastupdated = $update_tag
-        MERGE (n:ProxmoxNode {id: 'node1'})
+        MERGE (n:ProxmoxNode {id: 'test-cluster/node1'})
         SET n.name = 'node1', n.lastupdated = $update_tag
         """,
         cluster_id=TEST_CLUSTER_ID,
@@ -134,18 +134,18 @@ def test_sync_access_control(
 
     # Assert - Users exist
     expected_users = {
-        ("root@pam", "root@example.com"),
-        ("admin@pve", "admin@example.com"),
-        ("readonly@pam", "readonly@example.com"),
-        ("disabled@pam", "disabled@example.com"),
+        ("test-cluster/root@pam", "root@example.com"),
+        ("test-cluster/admin@pve", "admin@example.com"),
+        ("test-cluster/readonly@pam", "readonly@example.com"),
+        ("test-cluster/disabled@pam", "disabled@example.com"),
     }
     assert check_nodes(neo4j_session, "ProxmoxUser", ["id", "email"]) == expected_users
 
     # Assert - Groups exist
     expected_groups = {
-        ("admins", "Administrator group"),
-        ("operators", "Operator group"),
-        ("auditors", "Read-only auditor group"),
+        ("test-cluster/admins", "Administrator group"),
+        ("test-cluster/operators", "Operator group"),
+        ("test-cluster/auditors", "Read-only auditor group"),
     }
     assert (
         check_nodes(neo4j_session, "ProxmoxGroup", ["id", "comment"]) == expected_groups
@@ -153,9 +153,9 @@ def test_sync_access_control(
 
     # Assert - Roles exist
     expected_roles = {
-        ("Administrator", True),
-        ("PVEAuditor", True),
-        ("CustomRole", False),
+        ("test-cluster/Administrator", True),
+        ("test-cluster/PVEAuditor", True),
+        ("test-cluster/CustomRole", False),
     }
     assert (
         check_nodes(neo4j_session, "ProxmoxRole", ["id", "special"]) == expected_roles
@@ -172,10 +172,10 @@ def test_sync_access_control(
 
     # Assert - User to cluster relationships
     expected_user_rels = {
-        ("root@pam", TEST_CLUSTER_ID),
-        ("admin@pve", TEST_CLUSTER_ID),
-        ("readonly@pam", TEST_CLUSTER_ID),
-        ("disabled@pam", TEST_CLUSTER_ID),
+        ("test-cluster/root@pam", TEST_CLUSTER_ID),
+        ("test-cluster/admin@pve", TEST_CLUSTER_ID),
+        ("test-cluster/readonly@pam", TEST_CLUSTER_ID),
+        ("test-cluster/disabled@pam", TEST_CLUSTER_ID),
     }
     assert (
         check_rels(
@@ -235,9 +235,12 @@ def test_sync_access_control(
         "APPLIES_TO_USER",
         rel_direction_right=True,
     ) == {
-        ("/:root@pam:Administrator", "root@pam"),
-        ("/pool/production:admin@pve:CustomRole", "admin@pve"),
-        ("/vms/100:readonly@pam:CustomRole", "readonly@pam"),
+        ("test-cluster//:root@pam:Administrator", "test-cluster/root@pam"),
+        (
+            "test-cluster//pool/production:admin@pve:CustomRole",
+            "test-cluster/admin@pve",
+        ),
+        ("test-cluster//vms/100:readonly@pam:CustomRole", "test-cluster/readonly@pam"),
     }
 
     # Assert - ACL to group relationships
@@ -250,10 +253,13 @@ def test_sync_access_control(
         "APPLIES_TO_GROUP",
         rel_direction_right=True,
     ) == {
-        ("/:admins:Administrator", "admins"),
-        ("/nodes/node1:operators:PVEAuditor", "operators"),
-        ("/storage/local-lvm:auditors:PVEAuditor", "auditors"),
-        ("/vms:auditors:PVEAuditor", "auditors"),
+        ("test-cluster//:admins:Administrator", "test-cluster/admins"),
+        ("test-cluster//nodes/node1:operators:PVEAuditor", "test-cluster/operators"),
+        (
+            "test-cluster//storage/local-lvm:auditors:PVEAuditor",
+            "test-cluster/auditors",
+        ),
+        ("test-cluster//vms:auditors:PVEAuditor", "test-cluster/auditors"),
     }
 
     # Assert - User properties
@@ -314,13 +320,30 @@ def test_acl_resource_relationships(
     # Assert - ACL to resource relationships, one target label at a time
     expected_targets = {
         "ProxmoxCluster": {
-            ("/:root@pam:Administrator", TEST_CLUSTER_ID),
-            ("/:admins:Administrator", TEST_CLUSTER_ID),
+            ("test-cluster//:root@pam:Administrator", TEST_CLUSTER_ID),
+            ("test-cluster//:admins:Administrator", TEST_CLUSTER_ID),
         },
-        "ProxmoxVM": {("/vms/100:readonly@pam:CustomRole", "node1/qemu/100")},
-        "ProxmoxStorage": {("/storage/local-lvm:auditors:PVEAuditor", "local-lvm")},
-        "ProxmoxPool": {("/pool/production:admin@pve:CustomRole", "production")},
-        "ProxmoxNode": {("/nodes/node1:operators:PVEAuditor", "node1")},
+        "ProxmoxVM": {
+            (
+                "test-cluster//vms/100:readonly@pam:CustomRole",
+                "test-cluster/node1/qemu/100",
+            )
+        },
+        "ProxmoxStorage": {
+            (
+                "test-cluster//storage/local-lvm:auditors:PVEAuditor",
+                "test-cluster/local-lvm",
+            )
+        },
+        "ProxmoxPool": {
+            (
+                "test-cluster//pool/production:admin@pve:CustomRole",
+                "test-cluster/production",
+            )
+        },
+        "ProxmoxNode": {
+            ("test-cluster//nodes/node1:operators:PVEAuditor", "test-cluster/node1")
+        },
     }
     for target_label, expected in expected_targets.items():
         assert (

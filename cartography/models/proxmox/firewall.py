@@ -15,7 +15,10 @@ from cartography.models.core.relationships import TargetNodeMatcher
 class ProxmoxFirewallRuleNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef(
         "id",
-        description="Rule ID built from the scope, the scope ID when present, and the rule position.",
+        description=(
+            "Rule ID in the form cluster_id/scope[:scope_id]:pos, such as "
+            "prod/node:pve:0."
+        ),
     )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     cluster_id: PropertyRef = PropertyRef(
@@ -159,7 +162,10 @@ class ProxmoxFirewallRuleSchema(CartographyNodeSchema):
 class ProxmoxFirewallIPSetNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef(
         "id",
-        description="IP set ID built from the scope, the scope ID when present, and the IP set name.",
+        description=(
+            "IP set ID in the form cluster_id/scope[:scope_id]:name, such as "
+            "prod/cluster:trusted."
+        ),
     )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     name: PropertyRef = PropertyRef(

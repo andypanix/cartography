@@ -15,7 +15,7 @@ from cartography.models.core.relationships import TargetNodeMatcher
 class ProxmoxVMNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef(
         "id",
-        description="Guest identifier in the form node/type/vmid.",
+        description="Guest ID in the form cluster_id/node/type/vmid.",
     )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     vmid: PropertyRef = PropertyRef(
@@ -30,6 +30,7 @@ class ProxmoxVMNodeProperties(CartographyNodeProperties):
     )
     node: PropertyRef = PropertyRef(
         "node",
+        extra_index=True,
         description="Name of the node hosting the guest.",
     )
     cluster_id: PropertyRef = PropertyRef(
@@ -271,7 +272,7 @@ class ProxmoxVMToNodeRel(CartographyRelSchema):
 
     target_node_label: str = "ProxmoxNode"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {"id": PropertyRef("node")},
+        {"id": PropertyRef("node_id")},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "HOSTS_VM"
@@ -294,9 +295,13 @@ class ProxmoxVMSchema(CartographyNodeSchema):
 class ProxmoxDiskNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef(
         "id",
-        description="Disk identifier in the form node/type/vmid:disk_id.",
+        description="Disk ID in the form cluster_id/node/type/vmid:disk_id.",
     )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+    cluster_id: PropertyRef = PropertyRef(
+        "cluster_id",
+        description="ID of the cluster the disk belongs to.",
+    )
     disk_id: PropertyRef = PropertyRef(
         "disk_id",
         description="Disk key in the guest configuration, such as scsi0, rootfs or mp0.",
@@ -307,7 +312,7 @@ class ProxmoxDiskNodeProperties(CartographyNodeProperties):
     )
     storage: PropertyRef = PropertyRef(
         "storage",
-        description="ID of the storage that holds the disk.",
+        description="Name of the storage that holds the disk.",
     )
     size: PropertyRef = PropertyRef("size", description="Disk size in bytes.")
     backup: PropertyRef = PropertyRef(
@@ -441,10 +446,7 @@ class ProxmoxDiskToVMRel(CartographyRelSchema):
 
     target_node_label: str = "ProxmoxVM"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {
-            "vmid": PropertyRef("vmid"),
-            "cluster_id": PropertyRef("CLUSTER_ID", set_in_kwargs=True),
-        },
+        {"id": PropertyRef("vm_id")},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "HAS_DISK"
@@ -462,7 +464,7 @@ class ProxmoxDiskToStorageRel(CartographyRelSchema):
 
     target_node_label: str = "ProxmoxStorage"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {"id": PropertyRef("storage")},
+        {"id": PropertyRef("storage_id")},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "STORED_ON"
@@ -488,9 +490,13 @@ class ProxmoxDiskSchema(CartographyNodeSchema):
 class ProxmoxNetworkInterfaceNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef(
         "id",
-        description="Interface identifier in the form node/type/vmid:net_id.",
+        description="Interface ID in the form cluster_id/node/type/vmid:net_id.",
     )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+    cluster_id: PropertyRef = PropertyRef(
+        "cluster_id",
+        description="ID of the cluster the interface belongs to.",
+    )
     net_id: PropertyRef = PropertyRef(
         "net_id",
         description="Interface key in the guest configuration, such as net0.",
@@ -596,10 +602,7 @@ class ProxmoxNetworkInterfaceToVMRel(CartographyRelSchema):
 
     target_node_label: str = "ProxmoxVM"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {
-            "vmid": PropertyRef("vmid"),
-            "cluster_id": PropertyRef("CLUSTER_ID", set_in_kwargs=True),
-        },
+        {"id": PropertyRef("vm_id")},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "HAS_NETWORK_INTERFACE"

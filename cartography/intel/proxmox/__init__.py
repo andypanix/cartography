@@ -128,6 +128,15 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     # Add cluster_id to common_job_parameters for cleanup jobs
     common_job_parameters["CLUSTER_ID"] = cluster_id
 
+    # Sync storage before compute so disks can link to their storage
+    storage.sync(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+        common_job_parameters,
+    )
+
     # Sync VMs and containers
     compute.sync(
         neo4j_session,
@@ -136,15 +145,6 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
         config.update_tag,
         common_job_parameters,
         enable_guest_agent=config.proxmox_enable_guest_agent,
-    )
-
-    # Sync storage
-    storage.sync(
-        neo4j_session,
-        proxmox_client,
-        cluster_id,
-        config.update_tag,
-        common_job_parameters,
     )
 
     # Sync resource pools

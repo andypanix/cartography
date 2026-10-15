@@ -131,7 +131,10 @@ class ProxmoxClusterSchema(CartographyNodeSchema):
 
 @dataclass(frozen=True)
 class ProxmoxNodeNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef("id", description="Node name.")
+    id: PropertyRef = PropertyRef(
+        "id",
+        description="Node ID in the form cluster_id/node_name.",
+    )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     name: PropertyRef = PropertyRef(
         "name",
@@ -249,9 +252,13 @@ class ProxmoxNodeSchema(CartographyNodeSchema):
 class ProxmoxNodeNetworkInterfaceNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef(
         "id",
-        description="Interface identifier in the form node_name:interface_name.",
+        description=("Interface ID in the form cluster_id/node_name:interface_name."),
     )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+    cluster_id: PropertyRef = PropertyRef(
+        "cluster_id",
+        description="ID of the cluster the interface belongs to.",
+    )
     name: PropertyRef = PropertyRef(
         "name",
         extra_index=True,
@@ -259,6 +266,7 @@ class ProxmoxNodeNetworkInterfaceNodeProperties(CartographyNodeProperties):
     )
     node_name: PropertyRef = PropertyRef(
         "node_name",
+        extra_index=True,
         description="Name of the node that owns the interface.",
     )
     type: PropertyRef = PropertyRef(
@@ -352,7 +360,7 @@ class ProxmoxNodeNetworkInterfaceToNodeRel(CartographyRelSchema):
 
     target_node_label: str = "ProxmoxNode"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {"id": PropertyRef("node_name")},
+        {"id": PropertyRef("node_id")},
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "HAS_NETWORK_INTERFACE"

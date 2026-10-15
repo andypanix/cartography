@@ -17,8 +17,8 @@ def test_transform_ha_resource_data_parses_guest_vmid():
     result = transform_ha_resource_data(resources, "test-cluster")
 
     assert [(r["id"], r["vmid"]) for r in result] == [
-        ("vm:100", 100),
-        ("ct:200", 200),
-        ("vm:abc", None),
-        ("other:1", None),
+        ("test-cluster/vm:100", 100),
+        ("test-cluster/ct:200", 200),
+        ("test-cluster/vm:abc", None),
+        ("test-cluster/other:1", None),
     ]

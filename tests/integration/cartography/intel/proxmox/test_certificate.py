@@ -46,9 +46,9 @@ def test_sync_certificates(mock_get_node_certs, neo4j_session):
     # Create nodes for relationship tests
     neo4j_session.run(
         """
-        MERGE (n1:ProxmoxNode {id: 'node1'})
+        MERGE (n1:ProxmoxNode {id: 'test-cluster/node1'})
         SET n1.name = 'node1', n1.lastupdated = $update_tag
-        MERGE (n2:ProxmoxNode {id: 'node2'})
+        MERGE (n2:ProxmoxNode {id: 'test-cluster/node2'})
         SET n2.name = 'node2', n2.lastupdated = $update_tag
         """,
         update_tag=TEST_UPDATE_TAG,
@@ -72,8 +72,8 @@ def test_sync_certificates(mock_get_node_certs, neo4j_session):
 
     # Assert - Certificates exist
     expected_certs = {
-        ("node1:pveproxy-ssl.pem", "node1"),
-        ("node2:pveproxy-ssl.pem", "node2"),
+        ("test-cluster/node1:pveproxy-ssl.pem", "node1"),
+        ("test-cluster/node2:pveproxy-ssl.pem", "node2"),
     }
     assert (
         check_nodes(neo4j_session, "ProxmoxCertificate", ["id", "node_name"])
@@ -82,8 +82,8 @@ def test_sync_certificates(mock_get_node_certs, neo4j_session):
 
     # Assert - Certificate to cluster relationships
     expected_cert_cluster_rels = {
-        ("node1:pveproxy-ssl.pem", TEST_CLUSTER_ID),
-        ("node2:pveproxy-ssl.pem", TEST_CLUSTER_ID),
+        ("test-cluster/node1:pveproxy-ssl.pem", TEST_CLUSTER_ID),
+        ("test-cluster/node2:pveproxy-ssl.pem", TEST_CLUSTER_ID),
     }
     assert (
         check_rels(
@@ -100,8 +100,8 @@ def test_sync_certificates(mock_get_node_certs, neo4j_session):
 
     # Assert - Node to certificate relationships
     expected_node_cert_rels = {
-        ("node1", "node1:pveproxy-ssl.pem"),
-        ("node2", "node2:pveproxy-ssl.pem"),
+        ("test-cluster/node1", "test-cluster/node1:pveproxy-ssl.pem"),
+        ("test-cluster/node2", "test-cluster/node2:pveproxy-ssl.pem"),
     }
     assert (
         check_rels(

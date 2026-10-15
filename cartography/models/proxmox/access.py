@@ -15,7 +15,7 @@ from cartography.models.core.relationships import TargetNodeMatcher
 class ProxmoxUserNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef(
         "id",
-        description="User ID in the form user@realm.",
+        description="User ID in the form cluster_id/user@realm.",
     )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     userid: PropertyRef = PropertyRef(
@@ -91,7 +91,7 @@ class ProxmoxUserToGroupRel(CartographyRelSchema):
 
     target_node_label: str = "ProxmoxGroup"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {"groupid": PropertyRef("groups", one_to_many=True)},
+        {"id": PropertyRef("group_ids", one_to_many=True)},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "MEMBER_OF_GROUP"
@@ -112,12 +112,15 @@ class ProxmoxUserSchema(CartographyNodeSchema):
 
 @dataclass(frozen=True)
 class ProxmoxGroupNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef("id", description="Group ID.")
+    id: PropertyRef = PropertyRef(
+        "id",
+        description="Group ID in the form cluster_id/groupid.",
+    )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     groupid: PropertyRef = PropertyRef(
         "groupid",
         extra_index=True,
-        description="Group ID.",
+        description="Group ID as returned by the Proxmox VE API.",
     )
     cluster_id: PropertyRef = PropertyRef(
         "cluster_id",
@@ -160,12 +163,15 @@ class ProxmoxGroupSchema(CartographyNodeSchema):
 
 @dataclass(frozen=True)
 class ProxmoxRoleNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef("id", description="Role ID.")
+    id: PropertyRef = PropertyRef(
+        "id",
+        description="Role ID in the form cluster_id/roleid.",
+    )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     roleid: PropertyRef = PropertyRef(
         "roleid",
         extra_index=True,
-        description="Role ID.",
+        description="Role ID as returned by the Proxmox VE API.",
     )
     cluster_id: PropertyRef = PropertyRef(
         "cluster_id",
@@ -212,7 +218,7 @@ class ProxmoxRoleSchema(CartographyNodeSchema):
 class ProxmoxACLNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef(
         "id",
-        description="ACL entry ID in the form path:ugid:roleid.",
+        description="ACL entry ID in the form cluster_id/path:ugid:roleid.",
     )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     path: PropertyRef = PropertyRef(
@@ -283,7 +289,7 @@ class ProxmoxACLToRoleRel(CartographyRelSchema):
 
     target_node_label: str = "ProxmoxRole"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {"roleid": PropertyRef("roleid")},
+        {"id": PropertyRef("target_role_id")},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "GRANTS_ROLE"

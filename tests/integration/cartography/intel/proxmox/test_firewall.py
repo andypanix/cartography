@@ -69,9 +69,9 @@ def test_sync_firewall(
     # Create nodes for relationship tests
     neo4j_session.run(
         """
-        MERGE (n1:ProxmoxNode {id: 'node1'})
+        MERGE (n1:ProxmoxNode {id: 'test-cluster/node1'})
         SET n1.name = 'node1', n1.lastupdated = $update_tag
-        MERGE (n2:ProxmoxNode {id: 'node2'})
+        MERGE (n2:ProxmoxNode {id: 'test-cluster/node2'})
         SET n2.name = 'node2', n2.lastupdated = $update_tag
         """,
         update_tag=TEST_UPDATE_TAG,
@@ -125,8 +125,8 @@ def test_sync_firewall(
 
     # Assert - IP sets exist
     expected_ipsets = {
-        ("cluster:management-ips", "management-ips"),
-        ("cluster:backup-servers", "backup-servers"),
+        ("test-cluster/cluster:management-ips", "management-ips"),
+        ("test-cluster/cluster:backup-servers", "backup-servers"),
     }
     assert (
         check_nodes(neo4j_session, "ProxmoxFirewallIPSet", ["id", "name"])

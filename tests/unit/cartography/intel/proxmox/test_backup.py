@@ -37,7 +37,7 @@ def test_transform_backup_job_with_prune_settings():
     job = transformed[0]
 
     # Check required fields
-    assert job["id"] == "job-1"
+    assert job["id"] == "test-cluster/job-1"
     assert job["job_id"] == "job-1"
     assert job["cluster_id"] == "test-cluster"
     assert job["schedule"] == "0 2 * * *"
@@ -211,17 +211,17 @@ def test_transform_multiple_backup_jobs():
     assert len(transformed) == 3
 
     # Job A - only keep-last
-    assert transformed[0]["id"] == "job-a"
+    assert transformed[0]["id"] == "test-cluster/job-a"
     assert transformed[0]["prune_keep_last"] == 7
     assert transformed[0]["prune_keep_weekly"] is None
 
     # Job B - no prune settings
-    assert transformed[1]["id"] == "job-b"
+    assert transformed[1]["id"] == "test-cluster/job-b"
     assert transformed[1]["prune_keep_last"] is None
     assert transformed[1]["prune_keep_weekly"] is None
 
     # Job C - weekly and monthly only
-    assert transformed[2]["id"] == "job-c"
+    assert transformed[2]["id"] == "test-cluster/job-c"
     assert transformed[2]["prune_keep_last"] is None
     assert transformed[2]["prune_keep_weekly"] == 4
     assert transformed[2]["prune_keep_monthly"] == 6
@@ -241,10 +241,10 @@ def test_transform_backup_job_parses_vmids():
     result = transform_backup_job_data(jobs, "test-cluster")
 
     assert {job["id"]: job["vmids"] for job in result} == {
-        "single": [100],
-        "list": [100, 101],
-        "numeric": [102],
-        "all": [],
-        "pool": [],
-        "missing": [],
+        "test-cluster/single": [100],
+        "test-cluster/list": [100, 101],
+        "test-cluster/numeric": [102],
+        "test-cluster/all": [],
+        "test-cluster/pool": [],
+        "test-cluster/missing": [],
     }

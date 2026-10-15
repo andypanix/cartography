@@ -12,6 +12,7 @@ from typing import List
 import neo4j
 
 from cartography.client.core.tx import load
+from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.models.proxmox.storage import ProxmoxStorageSchema
 from cartography.util import timeit
 
@@ -101,7 +102,7 @@ def transform_storage_data(
 
         transformed_storage.append(
             {
-                "id": storage_id,
+                "id": cluster_scoped_id(cluster_id, storage_id),
                 "name": storage_id,
                 "cluster_id": cluster_id,
                 "type": storage.get("type"),
@@ -111,7 +112,7 @@ def transform_storage_data(
                 "total": total,
                 "used": used,
                 "available": available,
-                "nodes": nodes,
+                "node_ids": [cluster_scoped_id(cluster_id, n) for n in nodes],
             }
         )
 

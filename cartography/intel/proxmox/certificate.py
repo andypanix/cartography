@@ -10,6 +10,7 @@ from typing import Any
 import neo4j
 
 from cartography.client.core.tx import load
+from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.models.proxmox.certificate import ProxmoxCertificateSchema
 from cartography.util import timeit
 
@@ -61,7 +62,7 @@ def transform_certificate_data(
     for cert in certificates:
         # Create unique ID from node and filename
         filename = cert.get("filename", "unknown")
-        cert_id = f"{node_name}:{filename}"
+        cert_id = cluster_scoped_id(cluster_id, f"{node_name}:{filename}")
 
         # Parse SAN (Subject Alternative Names)
         san = []
@@ -77,6 +78,7 @@ def transform_certificate_data(
                 "id": cert_id,
                 "cluster_id": cluster_id,
                 "node_name": node_name,
+                "node_id": cluster_scoped_id(cluster_id, node_name),
                 "filename": filename,
                 "fingerprint": cert.get("fingerprint"),
                 "issuer": cert.get("issuer"),

@@ -79,9 +79,9 @@ def test_sync_vms_and_containers(
 
     # Assert - Check VM nodes
     expected_vm_nodes = {
-        ("node1/qemu/100", "test-vm-1", "qemu", "running"),
-        ("node1/qemu/101", "test-vm-2", "qemu", "stopped"),
-        ("node2/lxc/200", "test-container-1", "lxc", "running"),
+        ("test-cluster/node1/qemu/100", "test-vm-1", "qemu", "running"),
+        ("test-cluster/node1/qemu/101", "test-vm-2", "qemu", "stopped"),
+        ("test-cluster/node2/lxc/200", "test-container-1", "lxc", "running"),
     }
     assert (
         check_nodes(neo4j_session, "ProxmoxVM", ["id", "name", "type", "status"])
@@ -90,9 +90,9 @@ def test_sync_vms_and_containers(
 
     # Assert - Check VM->Cluster relationships
     expected_rels = {
-        ("node1/qemu/100", TEST_CLUSTER_ID),
-        ("node1/qemu/101", TEST_CLUSTER_ID),
-        ("node2/lxc/200", TEST_CLUSTER_ID),
+        ("test-cluster/node1/qemu/100", TEST_CLUSTER_ID),
+        ("test-cluster/node1/qemu/101", TEST_CLUSTER_ID),
+        ("test-cluster/node2/lxc/200", TEST_CLUSTER_ID),
     }
     assert (
         check_rels(
@@ -168,11 +168,36 @@ def test_sync_vm_disks(
 
     # Assert - Check disk nodes
     expected_disk_nodes = {
-        ("node1/qemu/100:scsi0", "scsi0", "local-lvm", 107374182400),  # 100G in bytes
-        ("node1/qemu/101:scsi0", "scsi0", "local-lvm", 53687091200),  # 50G in bytes
-        ("node1/qemu/101:efidisk0", "efidisk0", "local-lvm", 4194304),  # 4M in bytes
-        ("node1/qemu/101:tpmstate0", "tpmstate0", "local-lvm", 4194304),  # 4M in bytes
-        ("node2/lxc/200:rootfs", "rootfs", "local-lvm", 10737418240),  # 10G in bytes
+        (
+            "test-cluster/node1/qemu/100:scsi0",
+            "scsi0",
+            "local-lvm",
+            107374182400,
+        ),  # 100G in bytes
+        (
+            "test-cluster/node1/qemu/101:scsi0",
+            "scsi0",
+            "local-lvm",
+            53687091200,
+        ),  # 50G in bytes
+        (
+            "test-cluster/node1/qemu/101:efidisk0",
+            "efidisk0",
+            "local-lvm",
+            4194304,
+        ),  # 4M in bytes
+        (
+            "test-cluster/node1/qemu/101:tpmstate0",
+            "tpmstate0",
+            "local-lvm",
+            4194304,
+        ),  # 4M in bytes
+        (
+            "test-cluster/node2/lxc/200:rootfs",
+            "rootfs",
+            "local-lvm",
+            10737418240,
+        ),  # 10G in bytes
     }
     assert (
         check_nodes(neo4j_session, "ProxmoxDisk", ["id", "disk_id", "storage", "size"])
@@ -181,11 +206,11 @@ def test_sync_vm_disks(
 
     # Assert - Check disk->VM relationships
     expected_rels = {
-        ("node1/qemu/100:scsi0", "node1/qemu/100"),
-        ("node1/qemu/101:scsi0", "node1/qemu/101"),
-        ("node1/qemu/101:efidisk0", "node1/qemu/101"),
-        ("node1/qemu/101:tpmstate0", "node1/qemu/101"),
-        ("node2/lxc/200:rootfs", "node2/lxc/200"),
+        ("test-cluster/node1/qemu/100:scsi0", "test-cluster/node1/qemu/100"),
+        ("test-cluster/node1/qemu/101:scsi0", "test-cluster/node1/qemu/101"),
+        ("test-cluster/node1/qemu/101:efidisk0", "test-cluster/node1/qemu/101"),
+        ("test-cluster/node1/qemu/101:tpmstate0", "test-cluster/node1/qemu/101"),
+        ("test-cluster/node2/lxc/200:rootfs", "test-cluster/node2/lxc/200"),
     }
     assert (
         check_rels(
@@ -253,10 +278,10 @@ def test_sync_vm_network_interfaces(
 
     # Assert - Check network interface nodes
     expected_interface_nodes = {
-        ("node1/qemu/100:net0", "net0", "BC:24:11:11:11:11"),
-        ("node1/qemu/100:net1", "net1", "BC:24:11:11:11:12"),
-        ("node1/qemu/101:net0", "net0", "BC:24:11:22:22:22"),
-        ("node2/lxc/200:net0", "net0", "BC:24:11:33:33:33"),
+        ("test-cluster/node1/qemu/100:net0", "net0", "BC:24:11:11:11:11"),
+        ("test-cluster/node1/qemu/100:net1", "net1", "BC:24:11:11:11:12"),
+        ("test-cluster/node1/qemu/101:net0", "net0", "BC:24:11:22:22:22"),
+        ("test-cluster/node2/lxc/200:net0", "net0", "BC:24:11:33:33:33"),
     }
     assert (
         check_nodes(
@@ -267,10 +292,10 @@ def test_sync_vm_network_interfaces(
 
     # Assert - Check interface->VM relationships
     expected_rels = {
-        ("node1/qemu/100:net0", "node1/qemu/100"),
-        ("node1/qemu/100:net1", "node1/qemu/100"),
-        ("node1/qemu/101:net0", "node1/qemu/101"),
-        ("node2/lxc/200:net0", "node2/lxc/200"),
+        ("test-cluster/node1/qemu/100:net0", "test-cluster/node1/qemu/100"),
+        ("test-cluster/node1/qemu/100:net1", "test-cluster/node1/qemu/100"),
+        ("test-cluster/node1/qemu/101:net0", "test-cluster/node1/qemu/101"),
+        ("test-cluster/node2/lxc/200:net0", "test-cluster/node2/lxc/200"),
     }
     assert (
         check_rels(
@@ -339,7 +364,7 @@ def test_vm_network_interface_ip_properties(
     # Assert - Check IPv4 properties on VM interface
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxNetworkInterface {id: 'node1/qemu/100:net0'})
+        MATCH (n:ProxmoxNetworkInterface {id: 'test-cluster/node1/qemu/100:net0'})
         RETURN n.ip, n.gw, n.bridge
         """
     )
@@ -352,7 +377,7 @@ def test_vm_network_interface_ip_properties(
     # Assert - Check IPv6 properties on container interface
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxNetworkInterface {id: 'node2/lxc/200:net0'})
+        MATCH (n:ProxmoxNetworkInterface {id: 'test-cluster/node2/lxc/200:net0'})
         RETURN n.ip, n.gw, n.ip6, n.gw6
         """
     )
@@ -417,7 +442,7 @@ def test_vm_cpu_properties(
     # Assert - Check CPU configuration
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxVM {id: 'node1/qemu/100'})
+        MATCH (n:ProxmoxVM {id: 'test-cluster/node1/qemu/100'})
         RETURN n.cores, n.sockets, n.vcpus
         """
     )
@@ -430,7 +455,7 @@ def test_vm_cpu_properties(
     # Assert - Check second VM with different CPU config
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxVM {id: 'node1/qemu/101'})
+        MATCH (n:ProxmoxVM {id: 'test-cluster/node1/qemu/101'})
         RETURN n.cores, n.sockets, n.vcpus
         """
     )
@@ -532,7 +557,7 @@ def test_sync_with_guest_agent_enabled(
     # Assert - Check guest agent data on VM 100
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxVM {id: 'node1/qemu/100'})
+        MATCH (n:ProxmoxVM {id: 'test-cluster/node1/qemu/100'})
         RETURN n.guest_hostname, n.guest_os_name, n.guest_os_version,
                n.guest_kernel_release, n.guest_kernel_version, n.guest_machine
         """
@@ -551,7 +576,7 @@ def test_sync_with_guest_agent_enabled(
     # Assert - Check that VM without guest agent has no data
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxVM {id: 'node1/qemu/101'})
+        MATCH (n:ProxmoxVM {id: 'test-cluster/node1/qemu/101'})
         RETURN n.guest_hostname, n.guest_os_name
         """
     )
@@ -564,7 +589,7 @@ def test_sync_with_guest_agent_enabled(
     # Assert - Check network interfaces have actual IPs from guest agent
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxNetworkInterface {id: 'node1/qemu/100:net0'})
+        MATCH (n:ProxmoxNetworkInterface {id: 'test-cluster/node1/qemu/100:net0'})
         RETURN n.actual_ipv4, n.actual_ipv6, n.guest_interface_name
         """
     )
@@ -577,7 +602,7 @@ def test_sync_with_guest_agent_enabled(
     # Assert - Check second network interface has actual IPs
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxNetworkInterface {id: 'node1/qemu/100:net1'})
+        MATCH (n:ProxmoxNetworkInterface {id: 'test-cluster/node1/qemu/100:net1'})
         RETURN n.actual_ipv4, n.guest_interface_name
         """
     )
@@ -644,7 +669,7 @@ def test_sync_with_guest_agent_disabled(
     # Assert - Check that no guest agent data is present
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxVM {id: 'node1/qemu/100'})
+        MATCH (n:ProxmoxVM {id: 'test-cluster/node1/qemu/100'})
         RETURN n.guest_hostname, n.guest_os_name
         """
     )
@@ -707,7 +732,7 @@ def test_vm_enhanced_properties(
     # Assert - Check enhanced VM properties on VM 100
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxVM {id: 'node1/qemu/100'})
+        MATCH (n:ProxmoxVM {id: 'test-cluster/node1/qemu/100'})
         RETURN n.ostype, n.onboot, n.protection, n.description,
                n.machine, n.bios, n.cpu, n.cpulimit, n.cpuunits, n.hotplug
         """
@@ -728,7 +753,7 @@ def test_vm_enhanced_properties(
     # Assert - Check enhanced VM properties on VM 101 (Windows VM)
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxVM {id: 'node1/qemu/101'})
+        MATCH (n:ProxmoxVM {id: 'test-cluster/node1/qemu/101'})
         RETURN n.ostype, n.onboot, n.protection, n.machine, n.bios
         """
     )
@@ -794,7 +819,7 @@ def test_disk_enhanced_properties(
     # Assert - Check enhanced disk properties on VM 100 disk
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxDisk {id: 'node1/qemu/100:scsi0'})
+        MATCH (n:ProxmoxDisk {id: 'test-cluster/node1/qemu/100:scsi0'})
         RETURN n.format, n.iothread, n.discard, n.ssd
         """
     )
@@ -808,7 +833,7 @@ def test_disk_enhanced_properties(
     # Assert - Check enhanced disk properties on VM 101 disk
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxDisk {id: 'node1/qemu/101:scsi0'})
+        MATCH (n:ProxmoxDisk {id: 'test-cluster/node1/qemu/101:scsi0'})
         RETURN n.backup, n.cache
         """
     )
@@ -871,7 +896,7 @@ def test_vm_additional_hardware_properties(
     # Assert - Check additional hardware properties on VM 100
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxVM {id: 'node1/qemu/100'})
+        MATCH (n:ProxmoxVM {id: 'test-cluster/node1/qemu/100'})
         RETURN n.balloon, n.numa, n.kvm, n.watchdog, n.rng0,
                n.hostpci_count, n.usb_count, n.serial_count
         """
@@ -890,7 +915,7 @@ def test_vm_additional_hardware_properties(
     # Assert - Check EFI and TPM on VM 101 (Windows 11 VM)
     result = neo4j_session.run(
         """
-        MATCH (n:ProxmoxVM {id: 'node1/qemu/101'})
+        MATCH (n:ProxmoxVM {id: 'test-cluster/node1/qemu/101'})
         RETURN n.efidisk0, n.tpmstate0
         """
     )

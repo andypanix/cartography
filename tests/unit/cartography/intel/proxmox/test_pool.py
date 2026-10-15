@@ -8,14 +8,17 @@ from tests.data.proxmox.pool import MOCK_POOL_DETAILS
 
 
 def test_transform_pool_data_lists_member_ids():
-    """Guest members map to full ProxmoxVM IDs and storage members to storage IDs."""
+    """Guest and storage members map to cluster-prefixed ProxmoxVM and storage IDs."""
     result = transform_pool_data(MOCK_POOL_DATA, "test-cluster", MOCK_POOL_DETAILS)
 
     members = {r["id"]: (r["vm_ids"], r["storage_ids"]) for r in result}
     assert members == {
-        "production": (["node1/qemu/100", "node2/lxc/200"], []),
-        "development": (["node1/qemu/101"], []),
-        "backup-storage": ([], ["nfs-backup"]),
+        "test-cluster/production": (
+            ["test-cluster/node1/qemu/100", "test-cluster/node2/lxc/200"],
+            [],
+        ),
+        "test-cluster/development": (["test-cluster/node1/qemu/101"], []),
+        "test-cluster/backup-storage": ([], ["test-cluster/nfs-backup"]),
     }
 
 

@@ -59,6 +59,6 @@ cartography \
 
 ## Advanced Configuration
 
-To sync several clusters, run Cartography once per cluster with a different `--proxmox-host`. Each run only cleans up data of the cluster it synced.
+To sync several clusters, run Cartography once per cluster with a different `--proxmox-host`. Each run only cleans up data of the cluster it synced. Resources with the same name in different clusters, such as node `pve` or storage `local`, stay separate nodes because their IDs start with the cluster ID.
 
 Use `--no-proxmox-verify-ssl` only for clusters that still use the self-signed certificate created at installation.

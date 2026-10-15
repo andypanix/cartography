@@ -13,12 +13,15 @@ from cartography.models.core.relationships import TargetNodeMatcher
 
 @dataclass(frozen=True)
 class ProxmoxStorageNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef("id", description="Storage ID.")
+    id: PropertyRef = PropertyRef(
+        "id",
+        description="Storage ID in the form cluster_id/storage_name.",
+    )
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
     name: PropertyRef = PropertyRef(
         "name",
         extra_index=True,
-        description="Storage name, identical to the storage ID.",
+        description="Storage name, the storage ID inside the cluster.",
     )
     cluster_id: PropertyRef = PropertyRef(
         "cluster_id",
@@ -85,7 +88,7 @@ class ProxmoxStorageToNodeRel(CartographyRelSchema):
 
     target_node_label: str = "ProxmoxNode"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {"id": PropertyRef("nodes", one_to_many=True)},
+        {"id": PropertyRef("node_ids", one_to_many=True)},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "AVAILABLE_ON"
