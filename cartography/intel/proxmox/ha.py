@@ -11,6 +11,7 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.intel.proxmox.util import cluster_scoped_id
+from cartography.intel.proxmox.util import proxmox_api_retry
 from cartography.models.proxmox.ha import ProxmoxHAGroupSchema
 from cartography.models.proxmox.ha import ProxmoxHAResourceSchema
 from cartography.util import timeit
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
+@proxmox_api_retry
 def get_ha_groups(proxmox_client: Any) -> list[dict[str, Any]]:
     """
     Get all HA groups in the cluster.
@@ -36,6 +38,7 @@ def get_ha_groups(proxmox_client: Any) -> list[dict[str, Any]]:
 
 
 @timeit
+@proxmox_api_retry
 def get_ha_resources(proxmox_client: Any) -> list[dict[str, Any]]:
     """
     Get all HA resources in the cluster.

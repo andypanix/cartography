@@ -11,6 +11,7 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.intel.proxmox.util import cluster_scoped_id
+from cartography.intel.proxmox.util import proxmox_api_retry
 from cartography.models.proxmox.firewall import ProxmoxFirewallIPSetSchema
 from cartography.models.proxmox.firewall import ProxmoxFirewallRuleSchema
 from cartography.util import timeit
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
+@proxmox_api_retry
 def get_cluster_firewall_rules(proxmox_client: Any) -> list[dict[str, Any]]:
     """
     Get cluster-level firewall rules.
@@ -36,6 +38,7 @@ def get_cluster_firewall_rules(proxmox_client: Any) -> list[dict[str, Any]]:
 
 
 @timeit
+@proxmox_api_retry
 def get_node_firewall_rules(
     proxmox_client: Any, node_name: str
 ) -> list[dict[str, Any]]:
@@ -51,6 +54,7 @@ def get_node_firewall_rules(
 
 
 @timeit
+@proxmox_api_retry
 def get_vm_firewall_rules(
     proxmox_client: Any, node_name: str, vmid: int
 ) -> list[dict[str, Any]]:
@@ -67,6 +71,7 @@ def get_vm_firewall_rules(
 
 
 @timeit
+@proxmox_api_retry
 def get_cluster_ipsets(proxmox_client: Any) -> list[dict[str, Any]]:
     """
     Get cluster-level IP sets.
@@ -79,6 +84,7 @@ def get_cluster_ipsets(proxmox_client: Any) -> list[dict[str, Any]]:
 
 
 @timeit
+@proxmox_api_retry
 def get_ipset_cidrs(proxmox_client: Any, ipset_name: str) -> list[dict[str, Any]]:
     """
     Get CIDR entries for a specific IP set.

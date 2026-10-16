@@ -14,6 +14,7 @@ import neo4j
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.proxmox.util import cluster_scoped_id
+from cartography.intel.proxmox.util import proxmox_api_retry
 from cartography.models.proxmox.cluster import ProxmoxClusterSchema
 from cartography.models.proxmox.cluster import ProxmoxNodeNetworkInterfaceSchema
 from cartography.models.proxmox.cluster import ProxmoxNodeSchema
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
+@proxmox_api_retry
 def get_cluster_status(proxmox_client: Any) -> List[Dict[str, Any]]:
     """
     Get cluster status information.
@@ -41,6 +43,7 @@ def get_cluster_status(proxmox_client: Any) -> List[Dict[str, Any]]:
 
 
 @timeit
+@proxmox_api_retry
 def get_nodes(proxmox_client: Any) -> List[Dict[str, Any]]:
     """
     Get all nodes in the cluster.
@@ -53,6 +56,7 @@ def get_nodes(proxmox_client: Any) -> List[Dict[str, Any]]:
 
 
 @timeit
+@proxmox_api_retry
 def get_node_status(proxmox_client: Any, node_name: str) -> Dict[str, Any]:
     """
     Get detailed status for a specific node.
@@ -66,6 +70,7 @@ def get_node_status(proxmox_client: Any, node_name: str) -> Dict[str, Any]:
 
 
 @timeit
+@proxmox_api_retry
 def get_node_network(proxmox_client: Any, node_name: str) -> List[Dict[str, Any]]:
     """
     Get network interface configuration for a specific node.
@@ -79,6 +84,7 @@ def get_node_network(proxmox_client: Any, node_name: str) -> List[Dict[str, Any]
 
 
 @timeit
+@proxmox_api_retry
 def get_cluster_options(proxmox_client: Any) -> Dict[str, Any]:
     """
     Get cluster-wide configuration options.
@@ -91,6 +97,7 @@ def get_cluster_options(proxmox_client: Any) -> Dict[str, Any]:
 
 
 @timeit
+@proxmox_api_retry
 def get_cluster_resources(proxmox_client: Any) -> List[Dict[str, Any]]:
     """
     Get cluster resource summary.
@@ -103,6 +110,7 @@ def get_cluster_resources(proxmox_client: Any) -> List[Dict[str, Any]]:
 
 
 @timeit
+@proxmox_api_retry
 def get_cluster_config(proxmox_client: Any) -> Any:
     """
     Get cluster configuration including corosync info.
@@ -116,6 +124,7 @@ def get_cluster_config(proxmox_client: Any) -> Any:
 
 
 @timeit
+@proxmox_api_retry
 def get_replication_jobs(proxmox_client: Any) -> List[Dict[str, Any]]:
     """
     Get cluster replication jobs.

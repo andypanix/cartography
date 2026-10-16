@@ -44,6 +44,7 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 | `--proxmox-password-env-var` | Name of the environment variable that holds the user password. Used only when no API token is configured. |
 | `--proxmox-verify-ssl` / `--no-proxmox-verify-ssl` | Verify the TLS certificate of the API. Default: enabled. |
 | `--proxmox-enable-guest-agent` | Collect OS and network details from the QEMU guest agent. Increases sync time. Default: disabled. |
+| `--proxmox-request-timeout` | Timeout in seconds for each API request. Default: `60`. |
 
 ## Run Cartography
 
@@ -58,6 +59,8 @@ cartography \
 ```
 
 ## Advanced Configuration
+
+Cartography tries an API request up to three times, with exponential backoff, when it times out, cannot connect, or gets a 429, 502, 503 or 504 response. Other errors stop the Proxmox sync.
 
 To sync several clusters, run Cartography once per cluster with a different `--proxmox-host`. Each run only cleans up data of the cluster it synced. Resources with the same name in different clusters, such as node `pve` or storage `local`, stay separate nodes because their IDs start with the cluster ID.
 

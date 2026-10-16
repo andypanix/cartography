@@ -1473,6 +1473,16 @@ class CLI:
                     hidden=PANEL_PROXMOX not in visible_panels,
                 ),
             ] = False,
+            proxmox_request_timeout: Annotated[
+                int,
+                typer.Option(
+                    "--proxmox-request-timeout",
+                    help="Timeout in seconds for Proxmox VE API requests.",
+                    min=1,
+                    rich_help_panel=PANEL_PROXMOX,
+                    hidden=PANEL_PROXMOX not in visible_panels,
+                ),
+            ] = 60,
             # =================================================================
             # GSuite Options
             # =================================================================
@@ -4097,6 +4107,7 @@ class CLI:
                 proxmox_password=proxmox_password,
                 proxmox_verify_ssl=proxmox_verify_ssl,
                 proxmox_enable_guest_agent=proxmox_enable_guest_agent,
+                proxmox_request_timeout=proxmox_request_timeout,
                 nist_cve_url=nist_cve_url,
                 cve_enabled=cve_enabled,
                 cve_api_key=cve_api_key,

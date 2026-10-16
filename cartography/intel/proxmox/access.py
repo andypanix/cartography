@@ -11,6 +11,7 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.intel.proxmox.util import cluster_scoped_id
+from cartography.intel.proxmox.util import proxmox_api_retry
 from cartography.models.proxmox.access import ProxmoxACLSchema
 from cartography.models.proxmox.access import ProxmoxGroupSchema
 from cartography.models.proxmox.access import ProxmoxRoleSchema
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
+@proxmox_api_retry
 def get_users(proxmox_client: Any) -> list[dict[str, Any]]:
     """
     Get all users in the cluster.
@@ -38,6 +40,7 @@ def get_users(proxmox_client: Any) -> list[dict[str, Any]]:
 
 
 @timeit
+@proxmox_api_retry
 def get_groups(proxmox_client: Any) -> list[dict[str, Any]]:
     """
     Get all groups in the cluster.
@@ -50,6 +53,7 @@ def get_groups(proxmox_client: Any) -> list[dict[str, Any]]:
 
 
 @timeit
+@proxmox_api_retry
 def get_group_members(
     proxmox_client: Any, groups: list[dict[str, Any]]
 ) -> dict[str, list[str]]:
@@ -84,6 +88,7 @@ def get_group_members(
 
 
 @timeit
+@proxmox_api_retry
 def get_roles(proxmox_client: Any) -> list[dict[str, Any]]:
     """
     Get all roles in the cluster.
@@ -96,6 +101,7 @@ def get_roles(proxmox_client: Any) -> list[dict[str, Any]]:
 
 
 @timeit
+@proxmox_api_retry
 def get_acls(proxmox_client: Any) -> list[dict[str, Any]]:
     """
     Get all ACL entries in the cluster.

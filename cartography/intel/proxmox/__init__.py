@@ -70,6 +70,7 @@ def _get_proxmox_client(config: Config) -> "ProxmoxAPI":
             token_name=config.proxmox_token_name,
             token_value=config.proxmox_token_value,
             verify_ssl=config.proxmox_verify_ssl,
+            timeout=config.proxmox_request_timeout,
         )
 
     if config.proxmox_password:
@@ -83,6 +84,7 @@ def _get_proxmox_client(config: Config) -> "ProxmoxAPI":
             user=config.proxmox_user,
             password=config.proxmox_password,
             verify_ssl=config.proxmox_verify_ssl,
+            timeout=config.proxmox_request_timeout,
         )
 
     raise ValueError(

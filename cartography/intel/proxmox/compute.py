@@ -10,10 +10,12 @@ from typing import Dict
 from typing import List
 
 import neo4j
+import requests
 from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
 from cartography.intel.proxmox.util import cluster_scoped_id
+from cartography.intel.proxmox.util import proxmox_api_retry
 from cartography.models.proxmox.compute import ProxmoxDiskSchema
 from cartography.models.proxmox.compute import ProxmoxNetworkInterfaceSchema
 from cartography.models.proxmox.compute import ProxmoxVMSchema
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
+@proxmox_api_retry
 def get_vms_for_node(proxmox_client: Any, node_name: str) -> List[Dict[str, Any]]:
     """
     Get all QEMU VMs on a node.
@@ -45,6 +48,7 @@ def get_vms_for_node(proxmox_client: Any, node_name: str) -> List[Dict[str, Any]
 
 
 @timeit
+@proxmox_api_retry
 def get_containers_for_node(
     proxmox_client: Any, node_name: str
 ) -> List[Dict[str, Any]]:
@@ -64,6 +68,7 @@ def get_containers_for_node(
 
 
 @timeit
+@proxmox_api_retry
 def get_vm_config(
     proxmox_client: Any, node_name: str, vmid: int, vm_type: str
 ) -> Dict[str, Any]:
@@ -100,11 +105,15 @@ def get_guest_agent_info(
     guest_data: Dict[str, Any] = {}
 
     # Proxmox answers with an HTTP error when the agent is not installed, not
-    # running, or the caller lacks the guest agent privilege. That is expected
-    # for many VMs, so skip guest data for this VM instead of failing the sync.
+    # running, or the caller lacks the guest agent privilege, and an agent that
+    # hangs makes the request time out. Both are expected for some VMs, so skip
+    # guest data for this VM instead of failing the sync.
+    agent = proxmox_client.nodes(node_name).qemu(vmid).agent
     try:
-        os_info = proxmox_client.nodes(node_name).qemu(vmid).agent("get-osinfo").get()
-    except ResourceException as e:
+        os_info = agent("get-osinfo").get()
+        hostname_info = agent("get-host-name").get()
+        network_info = agent("network-get-interfaces").get()
+    except (ResourceException, requests.exceptions.RequestException) as e:
         logger.debug(
             "QEMU guest agent unavailable for VM %s on node %s: %s",
             vmid,
@@ -123,17 +132,9 @@ def get_guest_agent_info(
         guest_data["guest_kernel_version"] = result.get("kernel-version")
         guest_data["guest_machine"] = result.get("machine")
 
-    # Get hostname
-    hostname_info = (
-        proxmox_client.nodes(node_name).qemu(vmid).agent("get-host-name").get()
-    )
     if hostname_info and "result" in hostname_info:
         guest_data["guest_hostname"] = hostname_info["result"].get("host-name")
 
-    # Get network interfaces with actual IPs
-    network_info = (
-        proxmox_client.nodes(node_name).qemu(vmid).agent("network-get-interfaces").get()
-    )
     if network_info and "result" in network_info:
         # Store raw network interface data for later processing
         guest_data["guest_network_interfaces"] = network_info["result"]

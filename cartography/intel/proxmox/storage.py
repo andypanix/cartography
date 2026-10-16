@@ -13,6 +13,7 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.intel.proxmox.util import cluster_scoped_id
+from cartography.intel.proxmox.util import proxmox_api_retry
 from cartography.models.proxmox.storage import ProxmoxStorageSchema
 from cartography.util import timeit
 
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
+@proxmox_api_retry
 def get_storage(proxmox_client: Any) -> List[Dict[str, Any]]:
     """
     Get all storage definitions from Proxmox.
@@ -37,6 +39,7 @@ def get_storage(proxmox_client: Any) -> List[Dict[str, Any]]:
 
 
 @timeit
+@proxmox_api_retry
 def get_storage_status(proxmox_client: Any, node_name: str) -> List[Dict[str, Any]]:
     """
     Get storage status for a specific node.

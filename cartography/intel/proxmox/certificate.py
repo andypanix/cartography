@@ -11,6 +11,7 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.intel.proxmox.util import cluster_scoped_id
+from cartography.intel.proxmox.util import proxmox_api_retry
 from cartography.models.proxmox.certificate import ProxmoxCertificateSchema
 from cartography.util import timeit
 
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
+@proxmox_api_retry
 def get_node_certificates(proxmox_client: Any, node_name: str) -> list[dict[str, Any]]:
     """
     Get SSL certificates for a specific node.

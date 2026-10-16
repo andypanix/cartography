@@ -11,6 +11,7 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.intel.proxmox.util import cluster_scoped_id
+from cartography.intel.proxmox.util import proxmox_api_retry
 from cartography.models.proxmox.pool import ProxmoxPoolSchema
 from cartography.util import timeit
 
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
+@proxmox_api_retry
 def get_pools(proxmox_client: Any) -> list[dict[str, Any]]:
     """
     Get all resource pools in the cluster.
@@ -35,6 +37,7 @@ def get_pools(proxmox_client: Any) -> list[dict[str, Any]]:
 
 
 @timeit
+@proxmox_api_retry
 def get_pool_details(proxmox_client: Any, poolid: str) -> dict[str, Any]:
     """
     Get detailed information about a specific pool.
