@@ -48,15 +48,15 @@ class ProxmoxClusterNodeProperties(CartographyNodeProperties):
     )
     migration_type: PropertyRef = PropertyRef(
         "migration_type",
-        description="Cluster-wide migration settings, such as secure or insecure.",
+        description="Cluster-wide migration mode, secure or insecure (type key of the migration option).",
     )
     migration_network: PropertyRef = PropertyRef(
         "migration_network",
-        description="Network CIDR used for migrations.",
+        description="Network CIDR used for migrations (network key of the migration option).",
     )
     migration_bandwidth_limit: PropertyRef = PropertyRef(
         "migration_bandwidth_limit",
-        description="Cluster-wide I/O bandwidth limits for operations such as migration.",
+        description="Cluster-wide I/O bandwidth limit for migrations in KiB/s (migration key of the bwlimit option).",
     )
     console: PropertyRef = PropertyRef(
         "console",
