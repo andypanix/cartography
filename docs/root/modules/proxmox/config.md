@@ -1,6 +1,6 @@
 # Proxmox Configuration
 
-Cartography reads a Proxmox VE cluster through its REST API. The module supports Proxmox VE 9 and is compatible with Proxmox VE 8.4. Data that only Proxmox VE 9 provides, such as HA rules, is skipped on 8.4.
+Cartography reads a Proxmox VE cluster through its REST API. Supported versions: Proxmox VE 9, and Proxmox VE 8.4 or later. Earlier Proxmox VE 8 releases are not supported. Data that only Proxmox VE 9 provides, such as HA rules, is skipped on 8.4.
 
 ## Authentication
 

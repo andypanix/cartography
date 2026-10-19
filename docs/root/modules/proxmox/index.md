@@ -1,6 +1,6 @@
 # Proxmox Virtual Environment
 
-Cartography syncs one Proxmox VE cluster per run. The module supports Proxmox VE 9 and is compatible with Proxmox VE 8.4. Each cluster is a `ProxmoxCluster` node and owns every other Proxmox node in the graph.
+Cartography syncs one Proxmox VE cluster per run. The module supports Proxmox VE 9, and Proxmox VE 8.4 or later. Each cluster is a `ProxmoxCluster` node and owns every other Proxmox node in the graph.
 
 Proxmox names such as node `pve`, storage `local`, or user `root@pam` are only unique inside one cluster, so the `id` of every other Proxmox node starts with the cluster ID, for example `prod/pve` or `prod/root@pam`. The name inside the cluster stays in its own indexed property, such as `name`, `userid`, or `vmid`, next to `cluster_id`.
 
