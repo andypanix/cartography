@@ -114,7 +114,9 @@ cartography \
 
 Each guest costs one configuration and one snapshot request, plus one cloud-init request for a VM with a cloud-init drive and one interface request for a running container. With `--proxmox-enable-guest-agent`, a running VM costs six more guest agent requests, three of them only when the agent answers the first three.
 
-Cartography tries an API request up to three times, with exponential backoff, when it times out, cannot connect, or gets a 429, 502, 503 or 504 response. Other errors stop the Proxmox sync.
+Cartography tries an API request up to three times, with exponential backoff, when it times out, cannot connect, or gets a 429, 502, 503 or 504 response.
+
+An error in the cluster and node sync stops the Proxmox sync, because every other module needs the cluster. Any other module that fails, such as access, firewall or SDN, is logged with its traceback and skipped: its cleanup does not run, so its data from the last successful sync stays in the graph, and the other modules still sync. Storage content waits for the storage sync and resource mappings wait for the guest sync, so they are skipped when that sync fails. The rule cleanup needs both the firewall and the SDN sync, because VNet firewall rules are loaded by the SDN sync. The effective permissions analysis (`HAS_PERMISSION`) does not run when the access sync fails. When any module failed, the Proxmox sync ends with an error that names the failed modules, so the Cartography run reports the failure.
 
 On Proxmox VE 9, once every node is upgraded, HA groups are migrated to HA rules and the HA groups endpoint returns an error. Cartography then reads HA rules only and skips HA groups.
 
