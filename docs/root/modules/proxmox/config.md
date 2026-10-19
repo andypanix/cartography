@@ -19,14 +19,21 @@ Use the password of a Proxmox user. Prefer an API token: a password grants the f
 
 ## Required Permissions
 
-Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It covers every endpoint Cartography reads:
+Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It covers every endpoint Cartography reads except the ACME account details described below:
 
 | Privilege | Used for |
 | --- | --- |
-| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall |
+| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall, metric servers |
 | `VM.Audit` | VM and container configuration, guest firewall rules, backup jobs |
 | `Datastore.Audit` | Storage backends |
 | `Pool.Audit` | Resource pools |
+| `Mapping.Audit` | PCI, USB, and directory resource mappings; notification targets, endpoints, and matchers on `/mapping/notifications` |
+
+The resource mapping lists (`/cluster/mapping/pci`, `/cluster/mapping/usb`, `/cluster/mapping/dir`) return only the mappings the token has `Mapping.Audit`, `Mapping.Use`, or `Mapping.Modify` on, under `/mapping/<type>/<id>`. Without it, Cartography syncs no mappings and logs no error.
+
+Notification targets and matchers accept `Mapping.Audit`, `Mapping.Modify`, or `Mapping.Use` on `/mapping/notifications`. The endpoint details need `Mapping.Audit` or `Mapping.Modify` there (gotify and webhook lists accept only `Mapping.Audit`). When a token gets 403 on one of them, Cartography logs it and skips that part: without endpoint details, targets keep only their name, type, and status.
+
+The ACME account list is open to every user, but the account details (`/cluster/acme/account/{name}`) are readable only by `root@pam`, on both Proxmox VE 8.4 and 9. With `PVEAuditor`, Cartography syncs the account names only and logs it. Cartography does not read `/cluster/acme/plugins`, which needs `Sys.Modify` and holds DNS API credentials.
 
 ## Optional Permissions
 

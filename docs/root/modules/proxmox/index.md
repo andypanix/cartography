@@ -15,6 +15,10 @@ The module ingests:
 - **Access control**: users, groups, roles, and ACLs, with the resources each ACL applies to.
 - **Firewall**: cluster, node, and guest firewall rules, and cluster IP sets.
 - **Certificates**: TLS certificates installed on each node.
+- **Resource mappings**: cluster-wide PCI, USB, and directory mappings, the nodes in their map, and the VMs whose configuration uses them (`hostpciN` or `usbN` with `mapping=`, `virtiofsN`).
+- **Notifications**: notification targets (sendmail, SMTP, gotify, webhook endpoints), the Proxmox users that mail targets notify, and the matchers that route notifications to targets. Passwords, tokens, webhook header and secret values, webhook bodies, and URL paths are never stored: only header and secret names, and the scheme, host, and port of gotify and webhook URLs.
+- **Metric servers**: external InfluxDB and Graphite servers the cluster sends metrics to, without tokens.
+- **ACME accounts**: ACME accounts used to order certificates, with their CA directory, contacts, and status, without the account key.
 
 ```{toctree}
 config

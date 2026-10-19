@@ -18,6 +18,8 @@ import cartography.intel.proxmox.cluster
 import cartography.intel.proxmox.compute
 import cartography.intel.proxmox.firewall
 import cartography.intel.proxmox.ha
+import cartography.intel.proxmox.integrations
+import cartography.intel.proxmox.mapping
 import cartography.intel.proxmox.pool
 import cartography.intel.proxmox.storage
 from cartography.config import Config
@@ -47,6 +49,11 @@ SCOPED_IDS = {
     "ProxmoxACL": "/vms/100:root@pam:Administrator",
     "ProxmoxFirewallRule": "cluster:0",
     "ProxmoxCertificate": "pve:pveproxy-ssl.pem",
+    "ProxmoxResourceMapping": "pci/gpu",
+    "ProxmoxNotificationTarget": "mail-to-root",
+    "ProxmoxNotificationMatcher": "default-matcher",
+    "ProxmoxMetricServer": "influx",
+    "ProxmoxACMEAccount": "default",
 }
 
 
@@ -61,6 +68,8 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
     storage = cartography.intel.proxmox.storage
     access = cartography.intel.proxmox.access
     firewall = cartography.intel.proxmox.firewall
+    mapping = cartography.intel.proxmox.mapping
+    integrations = cartography.intel.proxmox.integrations
     return [
         (
             cluster,
@@ -94,6 +103,7 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
             {
                 "scsi0": "local:vm-100-disk-0,size=8G",
                 "net0": "virtio=BC:24:11:00:00:01,bridge=vmbr0",
+                "hostpci0": "mapping=gpu",
             },
         ),
         (
@@ -144,6 +154,35 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
             "get_node_certificates",
             [{"filename": "pveproxy-ssl.pem", "fingerprint": f"fp-{cluster_id}"}],
         ),
+        (
+            mapping,
+            "get_pci_mappings",
+            [{"id": "gpu", "map": ["node=pve,path=0000:01:00.0"]}],
+        ),
+        (mapping, "get_usb_mappings", []),
+        (mapping, "get_dir_mappings", []),
+        (
+            integrations,
+            "get_notification_targets",
+            [{"name": "mail-to-root", "type": "sendmail"}],
+        ),
+        (
+            integrations,
+            "get_notification_endpoints",
+            [],
+        ),
+        (
+            integrations,
+            "get_notification_matchers",
+            [{"name": "default-matcher", "target": ["mail-to-root"]}],
+        ),
+        (
+            integrations,
+            "get_metric_servers",
+            [{"id": "influx", "type": "influxdb", "server": "influx", "port": 8086}],
+        ),
+        (integrations, "get_acme_accounts", [{"name": "default"}]),
+        (integrations, "get_acme_account", {"directory": "https://acme.example"}),
     ]
 
 
@@ -238,6 +277,9 @@ def test_two_clusters_with_identical_names_stay_separate(neo4j_session):
         ("ProxmoxACL", "APPLIES_TO_USER", "ProxmoxUser"),
         ("ProxmoxACL", "GRANTS_ACCESS_TO", "ProxmoxVM"),
         ("ProxmoxUser", "HAS_PERMISSION", "ProxmoxVM"),
+        ("ProxmoxResourceMapping", "AVAILABLE_ON", "ProxmoxNode"),
+        ("ProxmoxVM", "USES_MAPPING", "ProxmoxResourceMapping"),
+        ("ProxmoxNotificationMatcher", "ROUTES_TO", "ProxmoxNotificationTarget"),
     )
     for source, rel, target in cluster_edges:
         assert check_rels(

@@ -14,6 +14,7 @@ import requests
 from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
+from cartography.intel.proxmox.mapping import extract_guest_mapping_refs
 from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.intel.proxmox.util import proxmox_api_retry
 from cartography.models.proxmox.compute import ProxmoxDiskSchema
@@ -673,7 +674,7 @@ def sync(
     update_tag: int,
     common_job_parameters: Dict[str, Any],
     enable_guest_agent: bool = False,
-) -> None:
+) -> List[Dict[str, str]]:
     """
     Sync VM and container compute resources.
 
@@ -683,6 +684,7 @@ def sync(
     :param update_tag: Sync timestamp
     :param common_job_parameters: Common parameters
     :param enable_guest_agent: Enable QEMU guest agent data collection
+    :return: Resource mapping references found in VM configurations, for mapping.sync
     """
     logger.info("Syncing Proxmox VMs and containers")
 
@@ -692,6 +694,7 @@ def sync(
     all_vms = []
     all_disks = []
     all_interfaces = []
+    all_mapping_refs: List[Dict[str, str]] = []
 
     for node in nodes:
         node_name = node["node"]
@@ -765,6 +768,12 @@ def sync(
             vm_path = f"{vm['node']}/{vm['type']}/{vm['vmid']}"
             disks = extract_disk_data(vm_config, vm_path, cluster_id)
             interfaces = extract_network_data(vm_config, vm_path, cluster_id)
+            if vm["type"] == "qemu":
+                all_mapping_refs.extend(
+                    extract_guest_mapping_refs(
+                        vm_config, cluster_scoped_id(cluster_id, vm_path)
+                    ),
+                )
 
             # Get guest agent data if enabled and VM is QEMU
             if (
@@ -815,3 +824,4 @@ def sync(
         f"Synced {len(transformed_vms)} VMs/containers{guest_agent_msg} with "
         f"{len(all_disks)} disks and {len(all_interfaces)} network interfaces",
     )
+    return all_mapping_refs

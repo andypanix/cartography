@@ -23,6 +23,8 @@ from cartography.intel.proxmox import cluster
 from cartography.intel.proxmox import compute
 from cartography.intel.proxmox import firewall
 from cartography.intel.proxmox import ha
+from cartography.intel.proxmox import integrations
+from cartography.intel.proxmox import mapping
 from cartography.intel.proxmox import pool
 from cartography.intel.proxmox import storage
 from cartography.models.proxmox.access import ProxmoxACLSchema
@@ -40,6 +42,11 @@ from cartography.models.proxmox.firewall import ProxmoxFirewallIPSetSchema
 from cartography.models.proxmox.firewall import ProxmoxFirewallRuleSchema
 from cartography.models.proxmox.ha import ProxmoxHAGroupSchema
 from cartography.models.proxmox.ha import ProxmoxHAResourceSchema
+from cartography.models.proxmox.integrations import ProxmoxACMEAccountSchema
+from cartography.models.proxmox.integrations import ProxmoxMetricServerSchema
+from cartography.models.proxmox.integrations import ProxmoxNotificationMatcherSchema
+from cartography.models.proxmox.integrations import ProxmoxNotificationTargetSchema
+from cartography.models.proxmox.mapping import ProxmoxResourceMappingSchema
 from cartography.models.proxmox.pool import ProxmoxPoolSchema
 from cartography.models.proxmox.storage import ProxmoxStorageSchema
 from cartography.stats import get_stats_client
@@ -140,7 +147,7 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     )
 
     # Sync VMs and containers
-    compute.sync(
+    guest_mapping_refs = compute.sync(
         neo4j_session,
         proxmox_client,
         cluster_id,
@@ -196,6 +203,25 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
 
     # Sync SSL/TLS certificates
     certificate.sync(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+        common_job_parameters,
+    )
+
+    # Sync PCI, USB, and directory mappings and the VMs that use them
+    mapping.sync(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+        common_job_parameters,
+        guest_mapping_refs=guest_mapping_refs,
+    )
+
+    # Sync notification targets and matchers, metric servers, ACME accounts
+    integrations.sync(
         neo4j_session,
         proxmox_client,
         cluster_id,
@@ -259,6 +285,15 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     GraphJob.from_node_schema(ProxmoxCertificateSchema(), common_job_parameters).run(
         neo4j_session
     )
+
+    for schema in (
+        ProxmoxResourceMappingSchema(),
+        ProxmoxNotificationTargetSchema(),
+        ProxmoxNotificationMatcherSchema(),
+        ProxmoxMetricServerSchema(),
+        ProxmoxACMEAccountSchema(),
+    ):
+        GraphJob.from_node_schema(schema, common_job_parameters).run(neo4j_session)
 
     # Note: ProxmoxCluster doesn't need cleanup since it's the tenant root
     # and has no sub_resource_relationship
