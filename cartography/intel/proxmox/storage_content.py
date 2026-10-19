@@ -16,6 +16,7 @@ Follows Cartography's Get → Transform → Load pattern.
 """
 
 import logging
+import time
 from typing import Any
 
 import neo4j
@@ -335,6 +336,10 @@ def sync(
             shared,
             cluster_id,
         )
+        # Kept content below carries over the time of its last real listing
+        listed_at = int(time.time())
+        for item in storage_archives + storage_templates:
+            item["last_listed"] = listed_at
         archives.extend(storage_archives)
         templates.extend(storage_templates)
 

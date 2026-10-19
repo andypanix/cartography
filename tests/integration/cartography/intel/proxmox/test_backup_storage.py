@@ -520,3 +520,46 @@ def test_backup_covered_flips_back_when_coverage_is_removed(neo4j_session):
         ("test-cluster/node2/lxc/200", True),
     }
     assert _rels(neo4j_session, "ProxmoxBackupJob", "COVERS", "ProxmoxVM") == set()
+
+
+def test_kept_content_keeps_its_last_listed_time(neo4j_session):
+    # Arrange - a first sync lists every storage at time 1000
+    _seed(neo4j_session, TEST_UPDATE_TAG)
+    with patch.object(storage_content.time, "time", return_value=1000.5):
+        _sync(
+            neo4j_session,
+            TEST_UPDATE_TAG,
+            MOCK_INCLUDED_VOLUMES,
+            MOCK_STORAGE_CONTENT,
+            MOCK_REPLICATION_JOBS,
+        )
+    next_tag = _next_run(neo4j_session)
+    storage_status = copy.deepcopy(MOCK_NODE_STORAGE_STATUS)
+    for status_list in storage_status.values():
+        for status in status_list:
+            if status["storage"] == "pbs":
+                status["active"] = 0
+    content = {k: v for k, v in MOCK_STORAGE_CONTENT.items() if k[1] != "pbs"}
+
+    # Act - at time 2000 pbs is inactive, so its content is kept, not listed
+    with patch.object(storage_content.time, "time", return_value=2000.5):
+        _sync(
+            neo4j_session,
+            next_tag,
+            MOCK_INCLUDED_VOLUMES,
+            content,
+            MOCK_REPLICATION_JOBS,
+            storage_status=storage_status,
+        )
+
+    # Assert - kept archives keep the time of their last listing, listed ones move on
+    archives = check_nodes(
+        neo4j_session, "ProxmoxBackupArchive", ["id", "last_listed", "lastupdated"]
+    )
+    assert {a for a in archives if a[0] in PBS_ARCHIVES} == {
+        (archive_id, 1000, next_tag) for archive_id in PBS_ARCHIVES
+    }
+    assert (f"test-cluster/node1/{LOCAL_BACKUP}", 2000, next_tag) in archives
+    assert check_nodes(neo4j_session, "ProxmoxStorageTemplate", ["last_listed"]) == {
+        (2000,)
+    }

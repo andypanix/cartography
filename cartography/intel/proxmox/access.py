@@ -14,6 +14,7 @@ from proxmoxer.core import ResourceException
 from cartography.client.core.tx import load
 from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.intel.proxmox.util import proxmox_api_retry
+from cartography.intel.proxmox.util import proxmox_optional_endpoint
 from cartography.models.core.nodes import CartographyNodeSchema
 from cartography.models.proxmox.access import ProxmoxACLSchema
 from cartography.models.proxmox.access import ProxmoxAPITokenSchema
@@ -113,6 +114,7 @@ def get_realm_details(
 
 
 @timeit
+@proxmox_optional_endpoint(list)
 @proxmox_api_retry
 def get_realm_sync_jobs(proxmox_client: Any) -> list[dict[str, Any]]:
     """
@@ -837,6 +839,21 @@ def sync(
     transformed_groups = transform_group_data(groups, cluster_id)
     transformed_roles = transform_role_data(roles, cluster_id)
     transformed_acls = transform_acl_data(acls, cluster_id)
+    token_ids = {token["id"] for token in transformed_tokens}
+    unmatched_token_acls = sorted(
+        acl["ugid"]
+        for acl in transformed_acls
+        if acl["target_token_id"] and acl["target_token_id"] not in token_ids
+    )
+    if unmatched_token_acls:
+        # The token list comes from /access/users?full=1, which shows only the
+        # users the API user may see.
+        logger.info(
+            "%d ACL entries name an API token that was not synced, so they "
+            "link to no token: %s",
+            len(unmatched_token_acls),
+            ", ".join(unmatched_token_acls),
+        )
 
     # LOAD - ingest to Neo4j. Targets load before the nodes that link to them:
     # realms before users and sync jobs, users before tokens and factors,

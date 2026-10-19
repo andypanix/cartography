@@ -20,8 +20,8 @@ from tests.data.proxmox.ha import MOCK_HA_STATUS_DATA
 
 MIGRATED_ERROR = ResourceException(
     500,
+    "Internal Server Error",
     "cannot index groups: ha groups have been migrated to rules",
-    "",
 )
 
 
@@ -190,3 +190,22 @@ def test_sync_propagates_other_ha_group_errors(mock_get_groups, *_mocks):
 
     with pytest.raises(ResourceException):
         cartography.intel.proxmox.ha.sync(MagicMock(), None, "c", 1, {})
+
+
+def test_transform_ha_status_data_ignores_fields_of_unexpected_type():
+    """An odd field of the untyped manager status does not stop the HA sync."""
+    status = [
+        {"id": "quorum", "type": "quorum", "node": "pve", "quorate": ""},
+        {"id": "lrm:pve", "type": "lrm", "node": "pve", "status": "active"},
+    ]
+    manager_status = {
+        "manager_status": {"master_node": "pve", "node_status": "online"},
+        "lrm_status": {"pve": "active"},
+    }
+
+    managers, lrms = transform_ha_status_data(status, manager_status, "c")
+
+    assert managers[0]["quorate"] is None
+    assert managers[0]["master_node"] == "pve"
+    assert lrms[0]["state"] is None
+    assert lrms[0]["crm_node_state"] is None

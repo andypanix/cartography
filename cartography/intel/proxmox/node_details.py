@@ -12,9 +12,6 @@ Follows Cartography's Get → Transform → Load pattern.
 import logging
 import re
 from typing import Any
-from urllib.parse import unquote
-from urllib.parse import urlsplit
-from urllib.parse import urlunsplit
 
 import neo4j
 import requests
@@ -25,6 +22,8 @@ from cartography.graph.job import GraphJob
 from cartography.intel.proxmox import cluster
 from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.intel.proxmox.util import proxmox_api_retry
+from cartography.intel.proxmox.util import strip_uri_credentials
+from cartography.intel.proxmox.util import URI_USERINFO_IN_TEXT
 from cartography.models.core.nodes import CartographyNodeSchema
 from cartography.models.proxmox.node_software import ProxmoxAPTRepositorySchema
 from cartography.models.proxmox.node_software import ProxmoxPackageSchema
@@ -91,14 +90,6 @@ STANDARD_REPO_TEST = "test"
 # HTTP errors (such as a 500 from smartctl, a 595 for an unreachable node or a
 # 403 from a custom role) and connection errors that outlast the retries.
 PROXMOX_API_ERRORS = (ResourceException, requests.exceptions.RequestException)
-
-# Query parameters of an APT repository URI that can carry a credential.
-URI_SECRET_QUERY_PARAM = re.compile(
-    r"token|key|pass|secret|auth|sig|credential|session",
-    re.IGNORECASE,
-)
-# userinfo in a URI embedded in free text, such as an APT parse error.
-URI_USERINFO_IN_TEXT = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)[^/\s@]+@")
 
 
 # ============================================================================
@@ -331,32 +322,6 @@ def get_pci_mdev_types(
 # ============================================================================
 # TRANSFORM helpers
 # ============================================================================
-
-
-def strip_uri_credentials(uri: Any) -> Any:
-    """
-    Remove credentials from a repository URI.
-
-    Drops the userinfo (user:password@) and the query parameters whose name
-    suggests a credential, such as token, key, auth or signature.
-
-    :param uri: Repository URI, such as https://user:token@repo.example.com/debian
-    :return: URI without credentials; non-string values are returned unchanged
-    """
-    if not isinstance(uri, str):
-        return uri
-    try:
-        parts = urlsplit(uri)
-    except ValueError:
-        return URI_USERINFO_IN_TEXT.sub(r"\g<scheme>", uri)
-    netloc = parts.netloc.rpartition("@")[2]
-    # Split by hand to keep the encoding of the parameters that stay.
-    query = "&".join(
-        param
-        for param in parts.query.split("&")
-        if param and not URI_SECRET_QUERY_PARAM.search(unquote(param.split("=")[0]))
-    )
-    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
 
 
 def _strip_text_credentials(text: Any) -> Any:

@@ -4,10 +4,14 @@ Helpers shared by the Proxmox sync modules.
 
 import functools
 import logging
+import re
 from typing import Any
 from typing import Callable
 from typing import cast
 from typing import TypeVar
+from urllib.parse import unquote
+from urllib.parse import urlsplit
+from urllib.parse import urlunsplit
 
 import backoff
 import requests
@@ -141,3 +145,38 @@ def proxmox_optional_endpoint(default: Callable[[], Any]) -> Callable[[F], F]:
         return cast(F, wrapper)
 
     return decorator
+
+
+# Query parameters of a URI that can carry a credential.
+URI_SECRET_QUERY_PARAM = re.compile(
+    r"token|key|pass|secret|auth|sig|credential|session",
+    re.IGNORECASE,
+)
+# userinfo in a URI embedded in free text, such as an APT parse error.
+URI_USERINFO_IN_TEXT = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)[^/\s@]+@")
+
+
+def strip_uri_credentials(uri: Any) -> Any:
+    """
+    Remove credentials from a URI, such as an APT repository or a proxy URL.
+
+    Drops the userinfo (user:password@) and the query parameters whose name
+    suggests a credential, such as token, key, auth or signature.
+
+    :param uri: Repository URI, such as https://user:token@repo.example.com/debian
+    :return: URI without credentials; non-string values are returned unchanged
+    """
+    if not isinstance(uri, str):
+        return uri
+    try:
+        parts = urlsplit(uri)
+    except ValueError:
+        return URI_USERINFO_IN_TEXT.sub(r"\g<scheme>", uri)
+    netloc = parts.netloc.rpartition("@")[2]
+    # Split by hand to keep the encoding of the parameters that stay.
+    query = "&".join(
+        param
+        for param in parts.query.split("&")
+        if param and not URI_SECRET_QUERY_PARAM.search(unquote(param.split("=")[0]))
+    )
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))

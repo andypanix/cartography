@@ -17,6 +17,7 @@ import neo4j
 from cartography.client.core.tx import load
 from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.intel.proxmox.util import proxmox_api_retry
+from cartography.intel.proxmox.util import proxmox_optional_endpoint
 from cartography.models.proxmox.mapping import ProxmoxResourceMappingSchema
 from cartography.util import timeit
 
@@ -64,6 +65,7 @@ def get_usb_mappings(proxmox_client: Any) -> list[dict[str, Any]]:
 
 
 @timeit
+@proxmox_optional_endpoint(list)
 @proxmox_api_retry
 def get_dir_mappings(proxmox_client: Any) -> list[dict[str, Any]]:
     """
@@ -158,6 +160,8 @@ def transform_mapping_data(
     for mapping in mappings:
         mapping_id = mapping["id"]
         entries = mapping.get("map") or []
+        if isinstance(entries, str):
+            entries = [entries]
         nodes = sorted(
             {
                 node

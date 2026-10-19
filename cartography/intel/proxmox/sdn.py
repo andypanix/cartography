@@ -26,7 +26,9 @@ from cartography.client.core.tx import load_matchlinks
 from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.graph.job import GraphJob
 from cartography.intel.proxmox.cluster import get_nodes
+from cartography.intel.proxmox.firewall import FirewallReferences
 from cartography.intel.proxmox.firewall import load_firewall_rules
+from cartography.intel.proxmox.firewall import resolve_rule_references
 from cartography.intel.proxmox.firewall import transform_firewall_rule_data
 from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.intel.proxmox.util import proxmox_api_retry
@@ -1689,6 +1691,7 @@ def sync(
     cluster_id: str,
     update_tag: int,
     common_job_parameters: dict[str, Any],
+    firewall_references: FirewallReferences | None = None,
 ) -> None:
     """
     Sync the SDN configuration and the SDN state of each node.
@@ -1701,6 +1704,8 @@ def sync(
     :param cluster_id: Parent cluster ID
     :param update_tag: Sync timestamp
     :param common_job_parameters: Common parameters
+    :param firewall_references: IP sets, aliases, and security groups returned
+        by the firewall sync; VNet rules that name one of them link to it
     """
     logger.info("Syncing Proxmox SDN configuration")
 
@@ -1722,6 +1727,8 @@ def sync(
                 name,
             ),
         )
+    if firewall_references is not None:
+        resolve_rule_references(vnet_rules, *firewall_references)
     controllers = get_controllers(proxmox_client)
     ipams = get_ipams(proxmox_client)
     entries_by_ipam = {

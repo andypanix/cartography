@@ -1,6 +1,6 @@
 # Proxmox Configuration
 
-Cartography reads a Proxmox VE cluster through its REST API. The module supports Proxmox VE 9 and is compatible with Proxmox VE 8.4. Data that only Proxmox VE 9 provides, such as HA rules, is skipped on 8.4.
+Cartography reads a Proxmox VE cluster through its REST API. Supported versions: Proxmox VE 9, and Proxmox VE 8.4 or later. Earlier Proxmox VE 8 releases are not supported. Data that only Proxmox VE 9 provides, such as HA rules, is skipped on 8.4.
 
 ## Authentication
 
@@ -45,7 +45,7 @@ The number of API calls grows with the cluster. For N online nodes and J backup 
 - Storage identity makes one call per active shared storage on Proxmox VE 9, and one call in total on Proxmox VE 8.4.
 - Replication makes `N + 2` calls. A per-job status call is only added when a node returns a job without its state.
 
-When a storage content listing fails, Cartography logs a warning with the node and storage and goes on with the rest of the sync. The backup archives, ISO images and container templates of a storage that is not read in a run, because the listing failed or the storage is inactive or disabled, are kept as seen in the last successful listing. An offline Proxmox Backup Server therefore does not make its guests look unbacked. Content of a storage that no node reports any more, for example after it is removed from the configuration, is deleted. A failed storage identity read is skipped in the same way, storage by storage.
+When a storage content listing fails, Cartography logs a warning with the node and storage and goes on with the rest of the sync. The backup archives, ISO images and container templates of a storage that is not read in a run, because the listing failed or the storage is inactive or disabled, are kept as seen in the last successful listing. Their `last_listed` property keeps the time of that listing, in seconds since the UNIX epoch, while `lastupdated` moves on with each sync, so `last_listed` shows how old the kept content is. An offline Proxmox Backup Server therefore does not make its guests look unbacked. Content of a storage that no node reports any more, for example after it is removed from the configuration, is deleted. A failed storage identity read is skipped in the same way, storage by storage.
 
 The resource mapping lists (`/cluster/mapping/pci`, `/cluster/mapping/usb`, `/cluster/mapping/dir`) return only the mappings the token has `Mapping.Audit`, `Mapping.Use`, or `Mapping.Modify` on, under `/mapping/<type>/<id>`. Without it, Cartography syncs no mappings and logs no error.
 
@@ -114,7 +114,9 @@ cartography \
 
 Each guest costs one configuration and one snapshot request, plus one cloud-init request for a VM with a cloud-init drive and one interface request for a running container. With `--proxmox-enable-guest-agent`, a running VM costs six more guest agent requests, three of them only when the agent answers the first three.
 
-Cartography tries an API request up to three times, with exponential backoff, when it times out, cannot connect, or gets a 429, 502, 503 or 504 response. Other errors stop the Proxmox sync.
+Cartography tries an API request up to three times, with exponential backoff, when it times out, cannot connect, or gets a 429, 502, 503 or 504 response.
+
+An error in the cluster and node sync stops the Proxmox sync, because every other module needs the cluster. Any other module that fails, such as access, firewall or SDN, is logged with its traceback and skipped: its cleanup does not run, so its data from the last successful sync stays in the graph, and the other modules still sync. Storage content waits for the storage sync and resource mappings wait for the guest sync, so they are skipped when that sync fails. The rule cleanup needs both the firewall and the SDN sync, because VNet firewall rules are loaded by the SDN sync. The effective permissions analysis (`HAS_PERMISSION`) does not run when the access sync fails. When any module failed, the Proxmox sync ends with an error that names the failed modules, so the Cartography run reports the failure.
 
 On Proxmox VE 9, once every node is upgraded, HA groups are migrated to HA rules and the HA groups endpoint returns an error. Cartography then reads HA rules only and skips HA groups.
 

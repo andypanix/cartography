@@ -203,8 +203,8 @@ def test_sync_ha(
     "get_ha_groups",
     side_effect=ResourceException(
         500,
+        "Internal Server Error",
         "cannot index groups: ha groups have been migrated to rules",
-        "",
     ),
 )
 @patch.object(

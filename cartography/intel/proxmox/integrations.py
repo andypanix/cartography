@@ -21,6 +21,7 @@ from cartography.client.core.tx import load
 from cartography.intel.proxmox.mapping import parse_property_string
 from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.intel.proxmox.util import proxmox_api_retry
+from cartography.intel.proxmox.util import proxmox_optional_endpoint
 from cartography.models.proxmox.integrations import ProxmoxACMEAccountSchema
 from cartography.models.proxmox.integrations import ProxmoxMetricServerSchema
 from cartography.models.proxmox.integrations import ProxmoxNotificationMatcherSchema
@@ -50,6 +51,7 @@ def get_notification_targets(proxmox_client: Any) -> list[dict[str, Any]]:
 
 
 @timeit
+@proxmox_optional_endpoint(list)
 @proxmox_api_retry
 def get_notification_endpoints(
     proxmox_client: Any,

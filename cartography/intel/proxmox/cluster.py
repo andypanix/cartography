@@ -10,11 +10,14 @@ from typing import Dict
 from typing import List
 
 import neo4j
+import requests
+from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.intel.proxmox.util import proxmox_api_retry
+from cartography.intel.proxmox.util import strip_uri_credentials
 from cartography.models.proxmox.cluster import ProxmoxClusterSchema
 from cartography.models.proxmox.cluster import ProxmoxNodeNetworkInterfaceSchema
 from cartography.models.proxmox.cluster import ProxmoxNodeSchema
@@ -237,14 +240,13 @@ def _option_int(value: Any) -> int | None:
     """
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    if isinstance(value, str):
-        try:
-            return int(float(value))
-        except ValueError:
-            return None
-    return None
+    if not isinstance(value, (int, float, str)):
+        return None
+    try:
+        return int(float(value))
+    except (OverflowError, ValueError):
+        # inf and nan have no int value
+        return None
 
 
 def transform_cluster_options(cluster_options: Dict[str, Any]) -> Dict[str, Any]:
@@ -269,12 +271,15 @@ def transform_cluster_options(cluster_options: Dict[str, Any]) -> Dict[str, Any]
         "migration_type": migration.get("type"),
         "migration_network": migration.get("network"),
         # Bandwidth limit for migrations in KiB/s
-        "migration_bandwidth_limit": _option_int(bwlimit.get("migration")),
+        # Migrations fall back to the default limit when none is set for them
+        "migration_bandwidth_limit": _option_int(
+            bwlimit.get("migration", bwlimit.get("default")),
+        ),
         # Console settings
         "console": cluster_options.get("console"),
         # Email/notification settings
         "email_from": cluster_options.get("email_from"),
-        "http_proxy": cluster_options.get("http_proxy"),
+        "http_proxy": strip_uri_credentials(cluster_options.get("http_proxy")),
         # Keyboard layout
         "keyboard": cluster_options.get("keyboard"),
         # Language
@@ -604,7 +609,13 @@ def sync(
     totem = get_corosync_totem(proxmox_client)
     if totem:
         corosync_nodes = get_corosync_nodes(proxmox_client)
-        qdevice = get_qdevice_status(proxmox_client)
+        try:
+            qdevice = get_qdevice_status(proxmox_client)
+        except (ResourceException, requests.exceptions.RequestException) as e:
+            # The QDevice status is optional: a QNet daemon that cannot be
+            # reached must not stop the cluster sync, which every module needs.
+            logger.warning("Could not read the Proxmox QDevice status: %s", e)
+            qdevice = {}
     else:
         logger.info(
             "Proxmox host %s is not clustered (no corosync configuration), "

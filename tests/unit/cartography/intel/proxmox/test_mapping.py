@@ -77,3 +77,13 @@ def test_transform_mapping_data_handles_missing_map():
     assert result[0]["nodes"] == []
     assert result[0]["map"] == []
     assert result[0]["guest_ids"] == []
+
+
+def test_transform_mapping_data_accepts_a_single_map_entry():
+    """A map returned as one string is one entry, not a list of characters."""
+    mappings = [{"id": "gpu", "map": "node=pve1,path=0000:01:00.0"}]
+
+    result = transform_mapping_data(mappings, "pci", "c", [])
+
+    assert result[0]["map"] == ["node=pve1,path=0000:01:00.0"]
+    assert result[0]["node_ids"] == ["c/pve1"]

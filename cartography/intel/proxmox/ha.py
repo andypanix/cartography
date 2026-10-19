@@ -126,7 +126,25 @@ def _optional_bool(value: Any) -> bool | None:
     :param value: Flag as returned by the API
     :return: The flag as a boolean, or None
     """
-    return None if value is None else bool(int(value))
+    if value is None:
+        return None
+    try:
+        return bool(int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    """
+    Return the value when it is a dict, otherwise an empty dict.
+
+    The HA manager status is not typed in the API schema, so a field of an
+    unexpected type is ignored instead of stopping the HA sync.
+
+    :param value: Value from the API
+    :return: The value, or an empty dict
+    """
+    return value if isinstance(value, dict) else {}
 
 
 def transform_ha_group_data(
@@ -325,9 +343,9 @@ def transform_ha_status_data(
     :return: Tuple of (HA manager dicts, LRM dicts). There is no HA manager
         when the status is empty.
     """
-    crm_status = manager_status.get("manager_status") or {}
-    lrm_status = manager_status.get("lrm_status") or {}
-    node_status = crm_status.get("node_status") or {}
+    crm_status = _as_dict(manager_status.get("manager_status"))
+    lrm_status = _as_dict(manager_status.get("lrm_status"))
+    node_status = _as_dict(crm_status.get("node_status"))
 
     manager: dict[str, Any] = {
         "id": cluster_scoped_id(cluster_id, "ha-manager"),
@@ -352,7 +370,7 @@ def transform_ha_status_data(
             manager["resource_mode"] = entry.get("resource_mode")
         elif entry_type == "lrm" and entry.get("node"):
             node = entry["node"]
-            node_lrm = lrm_status.get(node) or {}
+            node_lrm = _as_dict(lrm_status.get(node))
             lrms.append(
                 {
                     "id": cluster_scoped_id(cluster_id, f"lrm:{node}"),
