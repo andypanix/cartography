@@ -11,6 +11,8 @@ local to the node that holds the OSD and are read from that node.
 
 import logging
 from typing import Any
+from typing import Callable
+from typing import TypeVar
 
 import neo4j
 from proxmoxer.core import ResourceException
@@ -33,6 +35,8 @@ from cartography.models.proxmox.ceph import ProxmoxCephPoolSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 # pve-manager (PVE/Ceph/Tools.pm) dies with one of these messages, sent as an
 # HTTP 500, when Ceph is not installed or not set up on the queried node:
@@ -80,14 +84,31 @@ def get_ceph_status(proxmox_client: Any) -> dict[str, Any]:
 
 @timeit
 @proxmox_api_retry
-def get_ceph_metadata(proxmox_client: Any) -> dict[str, Any]:
+def get_ceph_node_status(proxmox_client: Any, node_name: str) -> dict[str, Any]:
+    """
+    Get the Ceph cluster status through one node.
+
+    The answer is cluster-wide, but the node checks for Ceph locally.
+
+    :param proxmox_client: Proxmox API client
+    :param node_name: Node to query
+    :return: Ceph status dict, with fsid and health
+    """
+    return proxmox_client.nodes(node_name).ceph.status.get()
+
+
+@timeit
+@proxmox_api_retry
+def get_ceph_metadata(proxmox_client: Any, scope: str = "all") -> dict[str, Any]:
     """
     Get the metadata of every Ceph daemon and the Ceph version of every node.
 
     :param proxmox_client: Proxmox API client
+    :param scope: "all", or "versions" for the per-node versions only, which
+        also works on a node without Ceph
     :return: Dict with mon, mgr, mds, osd, and node entries
     """
-    return proxmox_client.cluster.ceph.metadata.get()
+    return proxmox_client.cluster.ceph.metadata.get(scope=scope)
 
 
 @timeit
@@ -308,7 +329,7 @@ def transform_ceph_cluster(
     status: dict[str, Any],
     metadata: dict[str, Any],
     flags: list[dict[str, Any]],
-    health_mutes: list[dict[str, Any]],
+    health_mutes: list[dict[str, Any]] | None,
     cluster_id: str,
 ) -> dict[str, Any]:
     """
@@ -317,7 +338,7 @@ def transform_ceph_cluster(
     :param status: Raw `ceph status` output
     :param metadata: Raw Ceph metadata
     :param flags: Raw OSD flag list
-    :param health_mutes: Raw muted health check list
+    :param health_mutes: Raw muted health check list, None when unknown
     :param cluster_id: Proxmox VE cluster ID
     :return: Ceph cluster dict
     """
@@ -329,7 +350,9 @@ def transform_ceph_cluster(
         "cluster_id": cluster_id,
         "health_status": health.get("status"),
         "health_checks": sorted((health.get("checks") or {}).keys()),
-        "muted_health_checks": sorted(m["code"] for m in health_mutes),
+        "muted_health_checks": (
+            None if health_mutes is None else sorted(m["code"] for m in health_mutes)
+        ),
         "flags": sorted(f["name"] for f in flags if f.get("value")),
         "ceph_versions": _collect_versions(metadata),
     }
@@ -772,7 +795,19 @@ def _get_osd_details(
                 host,
             )
             continue
-        details[osd["id"]] = get_ceph_osd_metadata(proxmox_client, host, osd["id"])
+        try:
+            details[osd["id"]] = get_ceph_osd_metadata(proxmox_client, host, osd["id"])
+        except ResourceException as e:
+            # The node can go offline during the sync (HTTP 595): keep the
+            # data of the OSD tree instead of failing the whole sync.
+            logger.warning(
+                "Cannot read details of Ceph OSD %s from node %s, keeping the "
+                "OSD tree data only: %s",
+                osd["id"],
+                host,
+                e,
+            )
+            continue
         try:
             volumes[osd["id"]] = get_ceph_osd_lv_info(proxmox_client, host, osd["id"])
         except ResourceException as e:
@@ -782,6 +817,59 @@ def _get_osd_details(
                 raise
             logger.info("Ceph OSD %s has no LVM volume: %s", osd["id"], e)
     return details, volumes
+
+
+def _flags_from_osd_tree(osd_tree: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Build the OSD flag list from the comma-joined flags of the OSD tree.
+    """
+    return [
+        {"name": name, "value": 1}
+        for name in (osd_tree.get("flags") or "").split(",")
+        if name
+    ]
+
+
+def _find_ceph_status(
+    proxmox_client: Any,
+    online_nodes: list[str],
+) -> tuple[dict[str, Any] | None, str | None, bool]:
+    """
+    Read the Ceph status through the online nodes, one at a time.
+
+    `/cluster/ceph/status` is answered by the node that receives the request,
+    which fails when that node has no Ceph monitor, even if other nodes run
+    Ceph. Each node checks for Ceph locally, so try them in turn.
+
+    :return: The status, the node that answered, and whether every online node
+        confirmed that Ceph is not present (only meaningful without a status)
+    """
+    absent_everywhere = bool(online_nodes)
+    for node in online_nodes:
+        try:
+            return get_ceph_node_status(proxmox_client, node), node, False
+        except ResourceException as e:
+            if not is_ceph_not_present(e):
+                absent_everywhere = False
+                logger.warning("Cannot read Ceph status from node %s: %s", node, e)
+            else:
+                logger.debug("Ceph is not present on node %s: %s", node, e)
+    return None, None, absent_everywhere
+
+
+def _read_cluster_level(
+    call: Callable[[], T], fallback: Callable[[], T], what: str
+) -> T:
+    """
+    Run a `/cluster/ceph` call, using a fallback when the API node lacks Ceph.
+    """
+    try:
+        return call()
+    except ResourceException as e:
+        if not is_ceph_not_present(e):
+            raise
+        logger.info("Cannot read Ceph %s through the API node: %s", what, e)
+        return fallback()
 
 
 # ============================================================================
@@ -796,44 +884,82 @@ def sync(
     cluster_id: str,
     update_tag: int,
     common_job_parameters: dict[str, Any],
-) -> None:
+) -> bool:
     """
     Sync the Ceph cluster, its daemons, OSDs, pools, CRUSH rules, and file systems.
 
-    Skips the whole Ceph sync when Ceph is not installed or not initialized.
+    When the API node has no Ceph, the Ceph status is read through the other
+    online nodes. The Ceph sync is skipped when no online node has Ceph.
 
     :param neo4j_session: Neo4j session
     :param proxmox_client: Proxmox API client
     :param cluster_id: Parent cluster ID
     :param update_tag: Sync timestamp
     :param common_job_parameters: Common parameters
+    :return: True when the Ceph data is current (synced, or Ceph confirmed
+        absent on every online node) and the Ceph cleanup can run. False when
+        Ceph could not be read, so the existing Ceph data must be kept.
     """
     logger.info("Syncing Proxmox Ceph")
 
     # GET - detect Ceph first, with one cluster-wide call
+    status_node: str | None = None
     try:
-        status = get_ceph_status(proxmox_client)
+        status: dict[str, Any] | None = get_ceph_status(proxmox_client)
     except ResourceException as e:
         if not is_ceph_not_present(e):
             raise
-        logger.info("Ceph is not installed or not initialized, skipping: %s", e)
-        return
-
-    metadata = get_ceph_metadata(proxmox_client)
-    flags = get_ceph_flags(proxmox_client)
-    health_mutes = get_ceph_health_mutes(proxmox_client)
+        logger.info(
+            "Ceph is not present on the API node, trying the other nodes: %s", e
+        )
+        status = None
 
     nodes = cluster.get_nodes(proxmox_client)
-    query_node = _pick_query_node(nodes, metadata)
+    online = sorted(n["node"] for n in nodes if n.get("status") == "online")
+    online_nodes = set(online)
+
+    if status is None:
+        status, status_node, absent_everywhere = _find_ceph_status(
+            proxmox_client, online
+        )
+        if status is None:
+            if absent_everywhere:
+                logger.info("Ceph is not installed or not initialized, skipping")
+                return True
+            logger.warning(
+                "Cannot read Ceph from any online node, skipping Ceph and "
+                "keeping the existing Ceph data",
+            )
+            return False
+
+    metadata = _read_cluster_level(
+        lambda: get_ceph_metadata(proxmox_client),
+        lambda: get_ceph_metadata(proxmox_client, scope="versions"),
+        "metadata",
+    )
+    health_mutes: list[dict[str, Any]] | None = _read_cluster_level(
+        lambda: get_ceph_health_mutes(proxmox_client),
+        lambda: None,
+        "muted health checks",
+    )
+
+    query_node = status_node or _pick_query_node(nodes, metadata)
     if query_node is None:
-        logger.warning("No online Proxmox node to read Ceph data from, skipping Ceph")
-        return
-    online_nodes = {n["node"] for n in nodes if n.get("status") == "online"}
+        logger.warning(
+            "No online Proxmox node to read Ceph data from, skipping Ceph and "
+            "keeping the existing Ceph data",
+        )
+        return False
 
     monitors = get_ceph_monitors(proxmox_client, query_node)
     managers = get_ceph_managers(proxmox_client, query_node)
     metadata_servers = get_ceph_metadata_servers(proxmox_client, query_node)
     osd_tree = get_ceph_osd_tree(proxmox_client, query_node)
+    flags = _read_cluster_level(
+        lambda: get_ceph_flags(proxmox_client),
+        lambda: _flags_from_osd_tree(osd_tree),
+        "OSD flags",
+    )
     rules = get_ceph_rules(proxmox_client, query_node)
     pools = get_ceph_pools(proxmox_client, query_node)
     pool_statuses = {
@@ -899,6 +1025,7 @@ def sync(
         len(transformed_rules),
         len(transformed_filesystems),
     )
+    return True
 
 
 CEPH_SCHEMAS = (

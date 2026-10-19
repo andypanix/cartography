@@ -8,6 +8,7 @@ import pytest
 from proxmoxer.core import ResourceException
 
 from cartography.intel.proxmox import ceph
+from cartography.intel.proxmox import cluster
 from tests.data.proxmox.ceph import MOCK_CEPH_FILESYSTEMS
 from tests.data.proxmox.ceph import MOCK_CEPH_FLAGS
 from tests.data.proxmox.ceph import MOCK_CEPH_FSID
@@ -230,21 +231,131 @@ def test_pick_query_node_prefers_nodes_with_ceph():
     assert ceph._pick_query_node([{"node": "c", "status": "offline"}], {}) is None
 
 
-def test_sync_skips_when_ceph_not_installed(monkeypatch):
-    # Arrange
+NODES = [
+    {"node": "node1", "status": "online"},
+    {"node": "node2", "status": "online"},
+    {"node": "node3", "status": "offline"},
+]
+
+
+def _patch_detection(monkeypatch, node_status: MagicMock) -> MagicMock:
     get_metadata = MagicMock()
     monkeypatch.setattr(
         ceph,
         "get_ceph_status",
         MagicMock(side_effect=MOCK_CEPH_NOT_INSTALLED_ERROR),
     )
+    monkeypatch.setattr(cluster, "get_nodes", MagicMock(return_value=NODES))
+    monkeypatch.setattr(ceph, "get_ceph_node_status", node_status)
     monkeypatch.setattr(ceph, "get_ceph_metadata", get_metadata)
+    return get_metadata
+
+
+def test_sync_skips_when_ceph_not_installed(monkeypatch):
+    # Arrange - no online node has Ceph
+    node_status = MagicMock(side_effect=MOCK_CEPH_NOT_INSTALLED_ERROR)
+    get_metadata = _patch_detection(monkeypatch, node_status)
 
     # Act
-    ceph.sync(MagicMock(), MagicMock(), CLUSTER_ID, 1, {})
+    current = ceph.sync(MagicMock(), MagicMock(), CLUSTER_ID, 1, {})
 
-    # Assert - no further Ceph call after the failed detection
+    # Assert - each online node was asked once, and the cleanup may run
+    assert current is True
+    assert [c.args[1] for c in node_status.call_args_list] == ["node1", "node2"]
     get_metadata.assert_not_called()
+
+
+def test_sync_keeps_data_when_ceph_cannot_be_read(monkeypatch):
+    # Arrange - node1 has no Ceph, node2 is unreachable
+    node_status = MagicMock(
+        side_effect=[
+            MOCK_CEPH_NOT_INSTALLED_ERROR,
+            ResourceException(595, "Connection refused", ""),
+        ],
+    )
+    get_metadata = _patch_detection(monkeypatch, node_status)
+
+    # Act
+    current = ceph.sync(MagicMock(), MagicMock(), CLUSTER_ID, 1, {})
+
+    # Assert - absence is not confirmed, so the cleanup must be skipped
+    assert current is False
+    get_metadata.assert_not_called()
+
+
+def test_find_ceph_status_stops_at_first_node_with_ceph(monkeypatch):
+    # Arrange
+    node_status = MagicMock(
+        side_effect=[MOCK_CEPH_NOT_INSTALLED_ERROR, MOCK_CEPH_STATUS],
+    )
+    monkeypatch.setattr(ceph, "get_ceph_node_status", node_status)
+
+    # Act
+    result = ceph._find_ceph_status(MagicMock(), ["a", "b", "c"])
+
+    # Assert
+    assert result == (MOCK_CEPH_STATUS, "b", False)
+    assert node_status.call_count == 2
+
+
+def test_find_ceph_status_without_online_nodes_is_not_a_confirmed_absence():
+    # Act and assert
+    assert ceph._find_ceph_status(MagicMock(), []) == (None, None, False)
+
+
+def test_sync_keeps_data_without_online_nodes(monkeypatch):
+    # Arrange - Ceph answers, but no node is online to read the details from
+    monkeypatch.setattr(
+        ceph, "get_ceph_status", MagicMock(return_value=MOCK_CEPH_STATUS)
+    )
+    monkeypatch.setattr(ceph, "get_ceph_metadata", MagicMock(return_value={}))
+    monkeypatch.setattr(ceph, "get_ceph_health_mutes", MagicMock(return_value=[]))
+    monkeypatch.setattr(
+        cluster,
+        "get_nodes",
+        MagicMock(return_value=[{"node": "node1", "status": "offline"}]),
+    )
+
+    # Act and assert
+    assert ceph.sync(MagicMock(), MagicMock(), CLUSTER_ID, 1, {}) is False
+
+
+def test_flags_from_osd_tree():
+    # Act and assert
+    assert ceph._flags_from_osd_tree({"flags": "noout,noscrub"}) == [
+        {"name": "noout", "value": 1},
+        {"name": "noscrub", "value": 1},
+    ]
+    assert ceph._flags_from_osd_tree({}) == []
+
+
+def test_transform_ceph_cluster_with_unknown_mutes():
+    # Act
+    result = ceph.transform_ceph_cluster(MOCK_CEPH_STATUS, {}, [], None, CLUSTER_ID)
+
+    # Assert
+    assert result["muted_health_checks"] is None
+
+
+def test_osd_details_keep_tree_data_when_metadata_fails(monkeypatch):
+    # Arrange - node2 goes offline during the sync
+    osds = ceph.extract_osds(MOCK_CEPH_OSD_TREE)
+
+    def metadata(_client, node, osd_id):
+        if node == "node2":
+            raise ResourceException(595, "Connection refused", "")
+        return MOCK_CEPH_OSD_METADATA[osd_id]
+
+    lv_info = MagicMock(return_value={})
+    monkeypatch.setattr(ceph, "get_ceph_osd_metadata", MagicMock(side_effect=metadata))
+    monkeypatch.setattr(ceph, "get_ceph_osd_lv_info", lv_info)
+
+    # Act
+    details, volumes = ceph._get_osd_details(MagicMock(), osds, {"node1", "node2"})
+
+    # Assert - only the OSD on node1 has details
+    assert set(details) == {0}
+    assert set(volumes) == {0}
 
 
 def test_sync_raises_unrelated_errors(monkeypatch):

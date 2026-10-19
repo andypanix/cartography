@@ -355,3 +355,10 @@ MOCK_CEPH_NOT_INITIALIZED_ERROR = ResourceException(
     "Internal Server Error",
     "pveceph configuration not initialized - missing '/etc/pve/ceph.conf'",
 )
+
+# A node that went offline answers 595 through the API proxy.
+MOCK_CEPH_UNREACHABLE_ERROR = ResourceException(
+    595,
+    "Connection refused",
+    "",
+)

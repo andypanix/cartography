@@ -198,6 +198,11 @@ def _run_ingestion(
             side_effect=MOCK_CEPH_NOT_INSTALLED_ERROR,
         ),
         patch.object(
+            cartography.intel.proxmox.ceph,
+            "get_ceph_node_status",
+            side_effect=MOCK_CEPH_NOT_INSTALLED_ERROR,
+        ),
+        patch.object(
             cartography.intel.proxmox.firewall,
             "get_cluster_firewall_rules",
             return_value=[],

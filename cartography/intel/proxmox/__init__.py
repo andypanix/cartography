@@ -141,8 +141,9 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     )
 
     # Sync the hyper-converged Ceph cluster, after storage so RBD and CephFS
-    # storage can link to their pools and file systems
-    ceph.sync(
+    # storage can link to their pools and file systems. False means Ceph could
+    # not be read, so its cleanup is skipped to keep the existing Ceph data.
+    ceph_current = ceph.sync(
         neo4j_session,
         proxmox_client,
         cluster_id,
@@ -271,7 +272,10 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
         neo4j_session
     )
 
-    ceph.cleanup(neo4j_session, common_job_parameters)
+    if ceph_current:
+        ceph.cleanup(neo4j_session, common_job_parameters)
+    else:
+        logger.warning("Skipping Ceph cleanup: the Ceph data could not be read")
 
     # Note: ProxmoxCluster doesn't need cleanup since it's the tenant root
     # and has no sub_resource_relationship

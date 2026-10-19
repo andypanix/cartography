@@ -15,7 +15,7 @@ The module ingests:
 - **Access control**: users, groups, roles, and ACLs, with the resources each ACL applies to.
 - **Firewall**: cluster, node, and guest firewall rules, and cluster IP sets.
 - **Certificates**: TLS certificates installed on each node.
-- **Ceph**: the hyper-converged Ceph cluster, when Ceph is installed: monitors, managers, metadata servers, and OSDs with the nodes they run on, pools with their CRUSH rules, CephFS file systems, and the RBD and CephFS storage that use them. Clusters without Ceph skip this step.
+- **Ceph**: the hyper-converged Ceph cluster, when Ceph is installed: monitors, managers, metadata servers, and OSDs with the nodes they run on, pools with their CRUSH rules, CephFS file systems, and the RBD and CephFS storage that use them. Cartography reads Ceph through another node when the configured host does not run Ceph. Clusters without Ceph on any online node skip this step, and Cartography keeps the existing Ceph data when Ceph cannot be read.
 
 ```{toctree}
 config

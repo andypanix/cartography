@@ -29,6 +29,7 @@ from tests.data.proxmox.ceph import MOCK_CEPH_POOLS
 from tests.data.proxmox.ceph import MOCK_CEPH_RULES
 from tests.data.proxmox.ceph import MOCK_CEPH_STATUS
 from tests.data.proxmox.ceph import MOCK_CEPH_STORAGE
+from tests.data.proxmox.ceph import MOCK_CEPH_UNREACHABLE_ERROR
 from tests.integration.util import check_nodes
 from tests.integration.util import check_rels
 
@@ -263,8 +264,7 @@ def test_sync_ceph(neo4j_session):
     }
 
 
-def test_ceph_removed_cleans_up(neo4j_session):
-    # Arrange - a first sync with Ceph
+def _first_sync(neo4j_session) -> None:
     _seed(neo4j_session)
     with ExitStack() as stack:
         for p in _ceph_patches():
@@ -276,17 +276,126 @@ def test_ceph_removed_cleans_up(neo4j_session):
             TEST_UPDATE_TAG,
             {"UPDATE_TAG": TEST_UPDATE_TAG, "CLUSTER_ID": TEST_CLUSTER_ID},
         )
+
+
+def _metadata_without_local_ceph(_client: Any, scope: str = "all") -> dict[str, Any]:
+    # The API node has no Ceph: only the per-node versions can be read
+    if scope != "versions":
+        raise MOCK_CEPH_NOT_INSTALLED_ERROR
+    return {"node": MOCK_CEPH_METADATA["node"]}
+
+
+def _ceph_ids(neo4j_session) -> set[str]:
+    ids: set[str] = set()
+    for schema in ceph.CEPH_SCHEMAS:
+        ids |= {
+            i for (i,) in check_nodes(neo4j_session, schema().label, ["id"]) or set()
+        }
+    return ids
+
+
+def test_sync_ceph_through_another_node(neo4j_session):
+    # Arrange - the API node (node1) has no Ceph, node2 runs Ceph
+    _seed(neo4j_session)
+    params = {"UPDATE_TAG": TEST_UPDATE_TAG, "CLUSTER_ID": TEST_CLUSTER_ID}
+
+    def node_status(_client: Any, node: str) -> dict[str, Any]:
+        if node == "node1":
+            raise MOCK_CEPH_NOT_INSTALLED_ERROR
+        return MOCK_CEPH_STATUS
+
+    # Act
+    with ExitStack() as stack:
+        mocks = [stack.enter_context(p) for p in _ceph_patches()]
+        for name, kwargs in (
+            ("get_ceph_status", {"side_effect": MOCK_CEPH_NOT_INSTALLED_ERROR}),
+            ("get_ceph_metadata", {"side_effect": _metadata_without_local_ceph}),
+            ("get_ceph_flags", {"side_effect": MOCK_CEPH_NOT_INSTALLED_ERROR}),
+            ("get_ceph_health_mutes", {"side_effect": MOCK_CEPH_NOT_INSTALLED_ERROR}),
+            ("get_ceph_node_status", {"side_effect": node_status}),
+        ):
+            stack.enter_context(patch.object(ceph, name, **kwargs))
+        current = ceph.sync(
+            neo4j_session, MagicMock(), TEST_CLUSTER_ID, TEST_UPDATE_TAG, params
+        )
+    monitors_mock = mocks[5]
+
+    # Assert - per-node data is read from the node that answered the status
+    assert current is True
+    assert monitors_mock.call_args.args[1] == "node2"
+    record = neo4j_session.run(
+        """
+        MATCH (:ProxmoxCluster {id: $cluster_id})-[:RESOURCE]->(c:ProxmoxCephCluster)
+        RETURN c.id AS id, c.flags AS flags, c.muted_health_checks AS mutes
+        """,
+        cluster_id=TEST_CLUSTER_ID,
+    ).single()
+    assert dict(record) == {"id": CEPH_ID, "flags": ["noout"], "mutes": None}
+    assert {"test-cluster/osd.0", "test-cluster/osd.1"} <= _ceph_ids(neo4j_session)
+
+
+def test_ceph_unreadable_keeps_data(neo4j_session):
+    # Arrange - a first sync with Ceph
+    _first_sync(neo4j_session)
+    before = _ceph_ids(neo4j_session)
     new_tag = TEST_UPDATE_TAG + 1
     params = {"UPDATE_TAG": new_tag, "CLUSTER_ID": TEST_CLUSTER_ID}
 
-    # Act - Ceph is no longer installed
-    with patch.object(
-        ceph, "get_ceph_status", side_effect=MOCK_CEPH_NOT_INSTALLED_ERROR
+    # Act - the API node has no Ceph and the other nodes fail for another reason
+    with (
+        patch.object(
+            ceph, "get_ceph_status", side_effect=MOCK_CEPH_NOT_INSTALLED_ERROR
+        ),
+        patch.object(
+            ceph,
+            "get_ceph_node_status",
+            side_effect=MOCK_CEPH_UNREACHABLE_ERROR,
+        ),
+        patch.object(
+            cartography.intel.proxmox.cluster,
+            "get_nodes",
+            return_value=MOCK_CEPH_NODES,
+        ),
     ):
-        ceph.sync(neo4j_session, MagicMock(), TEST_CLUSTER_ID, new_tag, params)
-    ceph.cleanup(neo4j_session, params)
+        current = ceph.sync(
+            neo4j_session, MagicMock(), TEST_CLUSTER_ID, new_tag, params
+        )
+    if current:
+        ceph.cleanup(neo4j_session, params)
 
-    # Assert - every Ceph node of the cluster is gone
-    for schema in ceph.CEPH_SCHEMAS:
-        label = schema().label
-        assert check_nodes(neo4j_session, label, ["id"]) == set(), label
+    # Assert - the cleanup is skipped and the Ceph data is kept
+    assert current is False
+    assert before
+    assert _ceph_ids(neo4j_session) == before
+
+
+def test_ceph_removed_cleans_up(neo4j_session):
+    # Arrange - a first sync with Ceph
+    _first_sync(neo4j_session)
+    new_tag = TEST_UPDATE_TAG + 1
+    params = {"UPDATE_TAG": new_tag, "CLUSTER_ID": TEST_CLUSTER_ID}
+
+    # Act - Ceph is no longer installed on any node
+    with (
+        patch.object(
+            ceph, "get_ceph_status", side_effect=MOCK_CEPH_NOT_INSTALLED_ERROR
+        ),
+        patch.object(
+            ceph, "get_ceph_node_status", side_effect=MOCK_CEPH_NOT_INSTALLED_ERROR
+        ) as node_status,
+        patch.object(
+            cartography.intel.proxmox.cluster,
+            "get_nodes",
+            return_value=MOCK_CEPH_NODES,
+        ),
+    ):
+        current = ceph.sync(
+            neo4j_session, MagicMock(), TEST_CLUSTER_ID, new_tag, params
+        )
+    if current:
+        ceph.cleanup(neo4j_session, params)
+
+    # Assert - every online node was asked, and every Ceph node is gone
+    assert current is True
+    assert node_status.call_count == len(MOCK_CEPH_NODES)
+    assert _ceph_ids(neo4j_session) == set()
