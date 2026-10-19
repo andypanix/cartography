@@ -1,6 +1,6 @@
 # Proxmox Configuration
 
-Cartography reads a Proxmox VE cluster through its REST API. Proxmox VE 7.0 or later is required.
+Cartography reads a Proxmox VE cluster through its REST API. The module supports Proxmox VE 9 and is compatible with Proxmox VE 8.4. Data that only Proxmox VE 9 provides, such as HA rules, is skipped on 8.4.
 
 ## Authentication
 
@@ -23,14 +23,19 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 
 | Privilege | Used for |
 | --- | --- |
-| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall |
+| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA groups, resources, rules and status, firewall |
 | `VM.Audit` | VM and container configuration, guest firewall rules, backup jobs |
 | `Datastore.Audit` | Storage backends |
-| `Pool.Audit` | Resource pools |
+| `Pool.Audit` | Resource pools, including nested pools. Cartography lists only the pools where the user has `Pool.Audit`. |
 
 ## Optional Permissions
 
-`--proxmox-enable-guest-agent` queries the QEMU guest agent of running VMs. This needs `VM.Monitor` on Proxmox VE 8, or `VM.GuestAgent.Audit` on Proxmox VE 9, which `PVEAuditor` does not include. Without it, Cartography logs the failure and syncs the VMs without guest agent data.
+`--proxmox-enable-guest-agent` queries the QEMU guest agent of running VMs. The privilege it needs depends on the Proxmox VE version:
+
+- Proxmox VE 9: `VM.GuestAgent.Audit`, which `PVEAuditor` includes.
+- Proxmox VE 8.4: `VM.Monitor`, which `PVEAuditor` does not include. Grant it through a custom role that contains `VM.Monitor`.
+
+Without it, Cartography logs the failure and syncs the VMs without guest agent data.
 
 ## Configure Cartography
 
@@ -61,6 +66,8 @@ cartography \
 ## Advanced Configuration
 
 Cartography tries an API request up to three times, with exponential backoff, when it times out, cannot connect, or gets a 429, 502, 503 or 504 response. Other errors stop the Proxmox sync.
+
+On Proxmox VE 9, once every node is upgraded, HA groups are migrated to HA rules and the HA groups endpoint returns an error. Cartography then reads HA rules only and skips HA groups.
 
 To sync several clusters, run Cartography once per cluster with a different `--proxmox-host`. Each run only cleans up data of the cluster it synced. Resources with the same name in different clusters, such as node `pve` or storage `local`, stay separate nodes because their IDs start with the cluster ID.
 

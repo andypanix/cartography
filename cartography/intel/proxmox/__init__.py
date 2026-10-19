@@ -39,7 +39,10 @@ from cartography.models.proxmox.compute import ProxmoxVMSchema
 from cartography.models.proxmox.firewall import ProxmoxFirewallIPSetSchema
 from cartography.models.proxmox.firewall import ProxmoxFirewallRuleSchema
 from cartography.models.proxmox.ha import ProxmoxHAGroupSchema
+from cartography.models.proxmox.ha import ProxmoxHALRMSchema
+from cartography.models.proxmox.ha import ProxmoxHAManagerSchema
 from cartography.models.proxmox.ha import ProxmoxHAResourceSchema
+from cartography.models.proxmox.ha import ProxmoxHARuleSchema
 from cartography.models.proxmox.pool import ProxmoxPoolSchema
 from cartography.models.proxmox.storage import ProxmoxStorageSchema
 from cartography.stats import get_stats_client
@@ -167,7 +170,7 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
         common_job_parameters,
     )
 
-    # Sync HA groups and resources
+    # Sync HA groups, resources, rules, and status
     ha.sync(
         neo4j_session,
         proxmox_client,
@@ -236,6 +239,15 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
         neo4j_session
     )
     GraphJob.from_node_schema(ProxmoxHAResourceSchema(), common_job_parameters).run(
+        neo4j_session
+    )
+    GraphJob.from_node_schema(ProxmoxHARuleSchema(), common_job_parameters).run(
+        neo4j_session
+    )
+    GraphJob.from_node_schema(ProxmoxHAManagerSchema(), common_job_parameters).run(
+        neo4j_session
+    )
+    GraphJob.from_node_schema(ProxmoxHALRMSchema(), common_job_parameters).run(
         neo4j_session
     )
     GraphJob.from_node_schema(ProxmoxUserSchema(), common_job_parameters).run(

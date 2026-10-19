@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import patch
 
 import cartography.intel.proxmox.pool
+from tests.data.proxmox.pool import MOCK_NESTED_POOL_DATA
 from tests.data.proxmox.pool import MOCK_POOL_DATA
 from tests.data.proxmox.pool import MOCK_POOL_DETAILS
 from tests.integration.util import check_nodes
@@ -126,3 +127,48 @@ def test_sync_pools(mock_get_pool_details, mock_get_pools, neo4j_session):
         "CONTAINS_STORAGE",
         rel_direction_right=True,
     ) == {("test-cluster/backup-storage", "test-cluster/nfs-backup")}
+
+
+@patch.object(
+    cartography.intel.proxmox.pool, "get_pools", return_value=MOCK_NESTED_POOL_DATA
+)
+@patch.object(cartography.intel.proxmox.pool, "get_pool_details", return_value={})
+def test_sync_nested_pools(mock_get_pool_details, mock_get_pools, neo4j_session):
+    """
+    Nested pools are linked to their direct parent pool.
+    """
+    # Arrange
+    neo4j_session.run("MATCH (n) DETACH DELETE n")
+    neo4j_session.run(
+        "MERGE (c:ProxmoxCluster {id: $cluster_id}) SET c.lastupdated = $update_tag",
+        cluster_id=TEST_CLUSTER_ID,
+        update_tag=TEST_UPDATE_TAG,
+    )
+
+    # Act
+    cartography.intel.proxmox.pool.sync(
+        neo4j_session,
+        None,  # proxmox_client mocked
+        TEST_CLUSTER_ID,
+        TEST_UPDATE_TAG,
+        {"UPDATE_TAG": TEST_UPDATE_TAG, "CLUSTER_ID": TEST_CLUSTER_ID},
+    )
+
+    # Assert
+    assert check_nodes(neo4j_session, "ProxmoxPool", ["id", "parent_poolid"]) == {
+        ("test-cluster/development", None),
+        ("test-cluster/development/team1", "development"),
+        ("test-cluster/development/team1/frontend", "development/team1"),
+    }
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxPool",
+        "id",
+        "ProxmoxPool",
+        "id",
+        "CONTAINS_POOL",
+        rel_direction_right=True,
+    ) == {
+        ("test-cluster/development", "test-cluster/development/team1"),
+        ("test-cluster/development/team1", "test-cluster/development/team1/frontend"),
+    }

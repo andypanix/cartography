@@ -1,5 +1,5 @@
 """
-Sync Proxmox High Availability (HA) resources.
+Sync Proxmox High Availability (HA) groups, resources, rules, and status.
 
 Follows Cartography's Get → Transform → Load pattern.
 """
@@ -8,15 +8,25 @@ import logging
 from typing import Any
 
 import neo4j
+from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
 from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.intel.proxmox.util import proxmox_api_retry
+from cartography.intel.proxmox.util import proxmox_optional_endpoint
 from cartography.models.proxmox.ha import ProxmoxHAGroupSchema
+from cartography.models.proxmox.ha import ProxmoxHALRMSchema
+from cartography.models.proxmox.ha import ProxmoxHAManagerSchema
 from cartography.models.proxmox.ha import ProxmoxHAResourceSchema
+from cartography.models.proxmox.ha import ProxmoxHARuleSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+# Proxmox VE 9 migrates HA groups to HA rules once every node is upgraded.
+# From then on GET /cluster/ha/groups answers HTTP 500 with this message
+# (pve-ha-manager src/PVE/API2/HA/Groups.pm).
+HA_GROUPS_MIGRATED_MESSAGE = "ha groups have been migrated to rules"
 
 
 # ============================================================================
@@ -50,9 +60,73 @@ def get_ha_resources(proxmox_client: Any) -> list[dict[str, Any]]:
     return proxmox_client.cluster.ha.resources.get()
 
 
+@timeit
+@proxmox_optional_endpoint(list)
+@proxmox_api_retry
+def get_ha_rules(proxmox_client: Any) -> list[dict[str, Any]]:
+    """
+    Get all HA rules in the cluster. The endpoint exists on Proxmox VE 9 only.
+
+    :param proxmox_client: Proxmox API client
+    :return: List of HA rule dicts, empty when the endpoint does not exist
+    :raises: Exception if API call fails
+    """
+    return proxmox_client.cluster.ha.rules.get()
+
+
+@timeit
+@proxmox_api_retry
+def get_ha_status(proxmox_client: Any) -> list[dict[str, Any]]:
+    """
+    Get the HA status entries: quorum, master, fencing, lrm, and service.
+
+    :param proxmox_client: Proxmox API client
+    :return: List of HA status entry dicts
+    :raises: Exception if API call fails
+    """
+    return proxmox_client.cluster.ha.status.current.get()
+
+
+@timeit
+@proxmox_api_retry
+def get_ha_manager_status(proxmox_client: Any) -> dict[str, Any]:
+    """
+    Get the full HA manager status, including the LRM status of each node.
+
+    :param proxmox_client: Proxmox API client
+    :return: Dict with manager_status, lrm_status, and quorum keys
+    :raises: Exception if API call fails
+    """
+    return proxmox_client.cluster.ha.status.manager_status.get()
+
+
+def is_ha_groups_migrated_error(exc: Exception) -> bool:
+    """
+    Check if an HA groups API error means the groups were migrated to HA rules.
+
+    :param exc: The exception raised by the Proxmox API client
+    :return: True for the HTTP 500 that Proxmox VE 9 returns after the migration
+    """
+    return (
+        isinstance(exc, ResourceException)
+        and exc.status_code == 500
+        and HA_GROUPS_MIGRATED_MESSAGE in str(exc)
+    )
+
+
 # ============================================================================
 # TRANSFORM functions - manipulate data for graph ingestion
 # ============================================================================
+
+
+def _optional_bool(value: Any) -> bool | None:
+    """
+    Convert a Proxmox 0/1 flag to a boolean, keeping None when it is unset.
+
+    :param value: Flag as returned by the API
+    :return: The flag as a boolean, or None
+    """
+    return None if value is None else bool(int(value))
 
 
 def transform_ha_group_data(
@@ -136,11 +210,169 @@ def transform_ha_resource_data(
                 "max_restart": resource.get("max_restart"),
                 "max_relocate": resource.get("max_relocate"),
                 "comment": resource.get("comment"),
+                "type": resource.get("type"),
+                "failback": _optional_bool(resource.get("failback")),
+                "auto_rebalance": _optional_bool(resource.get("auto-rebalance")),
                 "vmid": _parse_guest_vmid(sid),
             }
         )
 
     return transformed_resources
+
+
+def _split_list(value: Any) -> list[str]:
+    """
+    Split an HA rule list property into its items.
+
+    The API returns lists such as resources and nodes as comma-separated
+    strings; a dict or list keyed by item is accepted too.
+
+    :param value: Raw property value
+    :return: List of non-empty items
+    """
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return [str(item) for item in value]
+
+
+def _format_node_list(value: Any) -> str | None:
+    """
+    Return the node list of an HA rule in the node[:priority],... form.
+
+    :param value: Raw nodes property, a string or a dict of node -> priority
+    :return: The node list string, or None when the rule has no nodes
+    """
+    if not value:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        entries = []
+        for node, settings in value.items():
+            priority = (
+                settings.get("priority") if isinstance(settings, dict) else settings
+            )
+            entries.append(node if priority is None else f"{node}:{priority}")
+        return ",".join(entries)
+    return ",".join(str(node) for node in value)
+
+
+def transform_ha_rule_data(
+    rules: list[dict[str, Any]],
+    cluster_id: str,
+) -> list[dict[str, Any]]:
+    """
+    Transform HA rule data into standard format.
+
+    :param rules: Raw HA rule data from API
+    :param cluster_id: Parent cluster ID
+    :return: List of transformed HA rule dicts
+    """
+    transformed_rules = []
+
+    for rule in rules:
+        # Required fields - use direct access
+        rule_id = rule["rule"]
+        rule_type = rule["type"]
+        is_node_affinity = rule_type == "node-affinity"
+        resources = _split_list(rule.get("resources"))
+        nodes = _format_node_list(rule.get("nodes"))
+        node_names = [entry.partition(":")[0] for entry in _split_list(nodes)]
+
+        transformed_rules.append(
+            {
+                "id": cluster_scoped_id(cluster_id, rule_id),
+                "rule": rule_id,
+                "cluster_id": cluster_id,
+                "type": rule_type,
+                "resources": resources,
+                "nodes": nodes,
+                # Node affinity rules default to positive affinity and are
+                # non-strict unless set. Resource affinity rules always set
+                # affinity and have no strict option.
+                "affinity": rule.get(
+                    "affinity",
+                    "positive" if is_node_affinity else None,
+                ),
+                "strict": (
+                    bool(int(rule.get("strict", 0))) if is_node_affinity else None
+                ),
+                "disable": bool(int(rule.get("disable", 0))),
+                "comment": rule.get("comment"),
+                "resource_ids": [
+                    cluster_scoped_id(cluster_id, sid) for sid in resources
+                ],
+                "node_ids": [cluster_scoped_id(cluster_id, n) for n in node_names],
+            }
+        )
+
+    return transformed_rules
+
+
+def transform_ha_status_data(
+    status: list[dict[str, Any]],
+    manager_status: dict[str, Any],
+    cluster_id: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """
+    Transform the HA status into the HA manager and one LRM per node.
+
+    :param status: Entries of GET /cluster/ha/status/current
+    :param manager_status: Response of GET /cluster/ha/status/manager_status
+    :param cluster_id: Parent cluster ID
+    :return: Tuple of (HA manager dicts, LRM dicts). There is no HA manager
+        when the status is empty.
+    """
+    crm_status = manager_status.get("manager_status") or {}
+    lrm_status = manager_status.get("lrm_status") or {}
+    node_status = crm_status.get("node_status") or {}
+
+    manager: dict[str, Any] = {
+        "id": cluster_scoped_id(cluster_id, "ha-manager"),
+        "cluster_id": cluster_id,
+        "quorate": None,
+        "master_node": crm_status.get("master_node"),
+        "master_status": None,
+        "armed_state": None,
+        "resource_mode": None,
+    }
+    lrms = []
+
+    for entry in status:
+        entry_type = entry.get("type")
+        if entry_type == "quorum":
+            manager["quorate"] = _optional_bool(entry.get("quorate"))
+        elif entry_type == "master":
+            manager["master_node"] = entry.get("node") or manager["master_node"]
+            manager["master_status"] = entry.get("status")
+        elif entry_type == "fencing":
+            manager["armed_state"] = entry.get("armed-state")
+            manager["resource_mode"] = entry.get("resource_mode")
+        elif entry_type == "lrm" and entry.get("node"):
+            node = entry["node"]
+            node_lrm = lrm_status.get(node) or {}
+            lrms.append(
+                {
+                    "id": cluster_scoped_id(cluster_id, f"lrm:{node}"),
+                    "cluster_id": cluster_id,
+                    "node": node,
+                    "node_id": cluster_scoped_id(cluster_id, node),
+                    "status": entry.get("status"),
+                    "state": node_lrm.get("state"),
+                    "mode": node_lrm.get("mode"),
+                    "crm_node_state": node_status.get(node),
+                }
+            )
+
+    manager["master_node_id"] = (
+        cluster_scoped_id(cluster_id, manager["master_node"])
+        if manager["master_node"]
+        else None
+    )
+    managers = [manager] if status else []
+    return managers, lrms
 
 
 # ============================================================================
@@ -194,6 +426,61 @@ def load_ha_resources(
     )
 
 
+def load_ha_rules(
+    neo4j_session: neo4j.Session,
+    rules: list[dict[str, Any]],
+    cluster_id: str,
+    update_tag: int,
+) -> None:
+    """
+    Load HA rule data into Neo4j using modern data model.
+
+    :param neo4j_session: Neo4j session
+    :param rules: List of transformed HA rule dicts
+    :param cluster_id: Parent cluster ID
+    :param update_tag: Sync timestamp
+    """
+    load(
+        neo4j_session,
+        ProxmoxHARuleSchema(),
+        rules,
+        lastupdated=update_tag,
+        CLUSTER_ID=cluster_id,
+    )
+
+
+def load_ha_status(
+    neo4j_session: neo4j.Session,
+    managers: list[dict[str, Any]],
+    lrms: list[dict[str, Any]],
+    cluster_id: str,
+    update_tag: int,
+) -> None:
+    """
+    Load the HA manager and LRM data into Neo4j using modern data model.
+
+    :param neo4j_session: Neo4j session
+    :param managers: List of transformed HA manager dicts
+    :param lrms: List of transformed LRM dicts
+    :param cluster_id: Parent cluster ID
+    :param update_tag: Sync timestamp
+    """
+    load(
+        neo4j_session,
+        ProxmoxHAManagerSchema(),
+        managers,
+        lastupdated=update_tag,
+        CLUSTER_ID=cluster_id,
+    )
+    load(
+        neo4j_session,
+        ProxmoxHALRMSchema(),
+        lrms,
+        lastupdated=update_tag,
+        CLUSTER_ID=cluster_id,
+    )
+
+
 # ============================================================================
 # SYNC function - orchestrates Get → Transform → Load
 # ============================================================================
@@ -208,7 +495,10 @@ def sync(
     common_job_parameters: dict[str, Any],
 ) -> None:
     """
-    Sync HA groups and resources.
+    Sync HA groups, resources, rules, and the HA manager status.
+
+    HA groups exist until a Proxmox VE 9 cluster migrates them to HA rules.
+    HA rules exist on Proxmox VE 9 only.
 
     Follows Cartography's Get → Transform → Load pattern.
 
@@ -218,15 +508,28 @@ def sync(
     :param update_tag: Sync timestamp
     :param common_job_parameters: Common parameters
     """
-    logger.info("Syncing Proxmox HA groups and resources")
+    logger.info("Syncing Proxmox HA groups, resources, rules, and status")
 
     # GET - retrieve data from API
-    groups = get_ha_groups(proxmox_client)
+    try:
+        groups = get_ha_groups(proxmox_client)
+    except ResourceException as e:
+        if not is_ha_groups_migrated_error(e):
+            raise
+        logger.info(
+            "Proxmox HA groups have been migrated to HA rules, skipping HA groups",
+        )
+        groups = []
     resources = get_ha_resources(proxmox_client)
+    rules = get_ha_rules(proxmox_client)
+    status = get_ha_status(proxmox_client)
+    manager_status = get_ha_manager_status(proxmox_client)
 
     # TRANSFORM - manipulate data for ingestion
     transformed_groups = transform_ha_group_data(groups, cluster_id)
     transformed_resources = transform_ha_resource_data(resources, cluster_id)
+    transformed_rules = transform_ha_rule_data(rules, cluster_id)
+    managers, lrms = transform_ha_status_data(status, manager_status, cluster_id)
 
     # LOAD - ingest to Neo4j
     if transformed_groups:
@@ -235,6 +538,13 @@ def sync(
     if transformed_resources:
         load_ha_resources(neo4j_session, transformed_resources, cluster_id, update_tag)
 
+    load_ha_rules(neo4j_session, transformed_rules, cluster_id, update_tag)
+    load_ha_status(neo4j_session, managers, lrms, cluster_id, update_tag)
+
     logger.info(
-        f"Synced {len(transformed_groups)} HA groups and {len(transformed_resources)} HA resources"
+        "Synced %d HA groups, %d HA resources, %d HA rules, and %d HA LRMs",
+        len(transformed_groups),
+        len(transformed_resources),
+        len(transformed_rules),
+        len(lrms),
     )

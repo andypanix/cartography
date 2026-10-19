@@ -28,6 +28,10 @@ class ProxmoxPoolNodeProperties(CartographyNodeProperties):
         "cluster_id",
         description="ID of the cluster that defines the pool.",
     )
+    parent_poolid: PropertyRef = PropertyRef(
+        "parent_poolid",
+        description="Pool ID of the parent pool, when the pool is nested, such as dev for dev/team1.",
+    )
 
 
 @dataclass(frozen=True)
@@ -85,12 +89,32 @@ class ProxmoxPoolToStorageRel(CartographyRelSchema):
 
 
 @dataclass(frozen=True)
+class ProxmoxPoolToParentPoolRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class ProxmoxPoolToParentPoolRel(CartographyRelSchema):
+    """The parent resource pool contains the nested pool."""
+
+    target_node_label: str = "ProxmoxPool"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("parent_pool_id")},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "CONTAINS_POOL"
+    properties: ProxmoxPoolToParentPoolRelProperties = (
+        ProxmoxPoolToParentPoolRelProperties()
+    )
+
+
+@dataclass(frozen=True)
 class ProxmoxPoolSchema(CartographyNodeSchema):
-    """A resource pool grouping VMs, containers, and storage in a Proxmox VE cluster."""
+    """A resource pool grouping VMs, containers, storage, and nested pools in a Proxmox VE cluster."""
 
     label: str = "ProxmoxPool"
     properties: ProxmoxPoolNodeProperties = ProxmoxPoolNodeProperties()
     sub_resource_relationship: ProxmoxPoolToClusterRel = ProxmoxPoolToClusterRel()
     other_relationships: OtherRelationships = OtherRelationships(
-        [ProxmoxPoolToVMRel(), ProxmoxPoolToStorageRel()],
+        [ProxmoxPoolToVMRel(), ProxmoxPoolToStorageRel(), ProxmoxPoolToParentPoolRel()],
     )

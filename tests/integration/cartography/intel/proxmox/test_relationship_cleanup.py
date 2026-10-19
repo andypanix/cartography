@@ -171,6 +171,11 @@ def _run_ingestion(
             "get_ha_resources",
             return_value=MOCK_HA_RESOURCE_DATA,
         ),
+        patch.object(cartography.intel.proxmox.ha, "get_ha_rules", return_value=[]),
+        patch.object(cartography.intel.proxmox.ha, "get_ha_status", return_value=[]),
+        patch.object(
+            cartography.intel.proxmox.ha, "get_ha_manager_status", return_value={}
+        ),
         # Access control
         patch.object(
             cartography.intel.proxmox.access, "get_users", return_value=MOCK_USER_DATA
@@ -330,6 +335,9 @@ def test_guest_relationships_stay_in_their_cluster(neo4j_session):
     access = cartography.intel.proxmox.access
     api_data = [
         (cartography.intel.proxmox.ha, "get_ha_groups", []),
+        (cartography.intel.proxmox.ha, "get_ha_rules", []),
+        (cartography.intel.proxmox.ha, "get_ha_status", []),
+        (cartography.intel.proxmox.ha, "get_ha_manager_status", {}),
         (
             cartography.intel.proxmox.ha,
             "get_ha_resources",
