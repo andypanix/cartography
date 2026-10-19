@@ -10,9 +10,10 @@ import cartography.intel.proxmox
 import cartography.intel.proxmox.cluster
 import cartography.intel.proxmox.compute
 import cartography.intel.proxmox.storage
-from tests.data.proxmox.cluster import MOCK_CLUSTER_CONFIG
 from tests.data.proxmox.cluster import MOCK_CLUSTER_DATA
 from tests.data.proxmox.cluster import MOCK_CLUSTER_OPTIONS
+from tests.data.proxmox.cluster import MOCK_COROSYNC_NODES
+from tests.data.proxmox.cluster import MOCK_COROSYNC_TOTEM
 from tests.data.proxmox.cluster import MOCK_NODE_DATA
 from tests.data.proxmox.cluster import MOCK_NODE_NETWORK_DATA
 from tests.data.proxmox.compute import MOCK_STORAGE_DATA
@@ -44,8 +45,18 @@ MOCK_NODES = [
 )
 @patch.object(
     cartography.intel.proxmox.cluster,
-    "get_cluster_config",
-    return_value=MOCK_CLUSTER_CONFIG,
+    "get_corosync_totem",
+    return_value=MOCK_COROSYNC_TOTEM,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_corosync_nodes",
+    new=lambda _client: MOCK_COROSYNC_NODES,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_qdevice_status",
+    new=lambda _client: {},
 )
 @patch.object(cartography.intel.proxmox.cluster, "get_node_network")
 @patch.object(cartography.intel.proxmox.compute, "get_vms_for_node")
@@ -60,7 +71,7 @@ def test_full_proxmox_sync(
     mock_get_containers,
     mock_get_vms,
     mock_get_node_network,
-    mock_get_config,
+    mock_get_totem,
     mock_get_options,
     mock_get_nodes,
     mock_get_cluster,
@@ -218,13 +229,23 @@ def test_full_proxmox_sync(
 )
 @patch.object(
     cartography.intel.proxmox.cluster,
-    "get_cluster_config",
-    return_value=MOCK_CLUSTER_CONFIG,
+    "get_corosync_totem",
+    return_value=MOCK_COROSYNC_TOTEM,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_corosync_nodes",
+    new=lambda _client: MOCK_COROSYNC_NODES,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_qdevice_status",
+    new=lambda _client: {},
 )
 @patch.object(cartography.intel.proxmox.cluster, "get_node_network")
 def test_cleanup_removes_stale_data(
     mock_get_node_network,
-    mock_get_config,
+    mock_get_totem,
     mock_get_options,
     mock_get_nodes,
     mock_get_cluster,

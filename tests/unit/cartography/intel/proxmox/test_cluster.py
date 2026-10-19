@@ -2,9 +2,19 @@
 Tests for Proxmox cluster module.
 """
 
-from cartography.intel.proxmox.cluster import transform_cluster_config
+from unittest.mock import MagicMock
+
+from cartography.intel.proxmox.cluster import get_corosync_nodes
+from cartography.intel.proxmox.cluster import get_corosync_totem
+from cartography.intel.proxmox.cluster import get_qdevice_status
 from cartography.intel.proxmox.cluster import transform_cluster_data
+from cartography.intel.proxmox.cluster import transform_corosync_nodes
+from cartography.intel.proxmox.cluster import transform_corosync_totem
 from cartography.intel.proxmox.cluster import transform_node_data
+from cartography.intel.proxmox.cluster import transform_qdevice_status
+from tests.data.proxmox.cluster import MOCK_COROSYNC_NODES
+from tests.data.proxmox.cluster import MOCK_COROSYNC_TOTEM
+from tests.data.proxmox.cluster import MOCK_QDEVICE_STATUS
 
 
 def test_transform_cluster_data_with_cluster_info():
@@ -97,55 +107,99 @@ def test_transform_node_data():
     assert result[1]["status"] == "online"
 
 
-def test_transform_cluster_config_dict():
-    """Test cluster config transformation when API returns a dict."""
-    cluster_config = {
-        "totem": {
-            "cluster_name": "test-cluster",
-            "config_version": 3,
-            "interface": "vmbr0",
-            "ip_version": "ipv4",
-            "secauth": "on",
-            "version": 2,
-        },
+def test_transform_corosync_totem():
+    """Totem values arrive as strings; numbers become ints and links a sorted list."""
+    result = transform_corosync_totem(MOCK_COROSYNC_TOTEM)
+
+    assert result == {
+        "totem_cluster_name": "test-cluster",
+        "totem_config_version": 3,
+        "totem_ip_version": "ipv4-6",
+        "totem_link_mode": "passive",
+        "totem_link_numbers": [0, 1],
+        "totem_secauth": "on",
+        "totem_version": 2,
     }
 
-    result = transform_cluster_config(cluster_config)
 
-    assert result["totem_cluster_name"] == "test-cluster"
-    assert result["totem_config_version"] == 3
-    assert result["totem_interface"] == "vmbr0"
-    assert result["totem_ip_version"] == "ipv4"
-    assert result["totem_secauth"] == "on"
-    assert result["totem_version"] == 2
+def test_transform_corosync_totem_without_interface():
+    """A totem section without interface sections has no link numbers."""
+    result = transform_corosync_totem({"cluster_name": "c", "config_version": "1"})
+
+    assert result["totem_link_numbers"] is None
+    assert result["totem_config_version"] == 1
 
 
-def test_transform_cluster_config_list():
-    """Test cluster config transformation when API returns a list."""
-    cluster_config = [
+def test_transform_corosync_totem_standalone_host():
+    """A standalone host answers null for the totem section."""
+    assert transform_corosync_totem(None) == {}
+    assert transform_corosync_totem({}) == {}
+
+
+def test_transform_qdevice_status():
+    """QDevice status keys are the labels of corosync-qdevice-tool."""
+    assert transform_qdevice_status(MOCK_QDEVICE_STATUS) == {
+        "qdevice_state": "Connected",
+        "qdevice_model": "Net",
+        "qdevice_qnetd_host": "192.168.1.50:5403",
+        "qdevice_algorithm": "Fifty-Fifty split",
+        "qdevice_tie_breaker": "Node with lowest node ID",
+    }
+    assert transform_qdevice_status({}) == {}
+
+
+def test_transform_corosync_nodes():
+    """Ring addresses are ordered by link number, ids and votes become ints."""
+    entries = MOCK_COROSYNC_NODES + [
+        # Entry without a name: the API keys it by ring0_addr. Links can skip numbers.
         {
-            "section": "totem",
-            "cluster_name": "test-cluster",
-            "config_version": 3,
-            "interface": "vmbr0",
-            "ip_version": "ipv4",
-            "secauth": "on",
-            "version": 2,
+            "node": "10.0.0.3",
+            "nodeid": "3",
+            "quorum_votes": "2",
+            "ring2_addr": "10.2.0.3",
+            "ring0_addr": "10.0.0.3",
         },
     ]
 
-    result = transform_cluster_config(cluster_config)
+    result = transform_corosync_nodes(entries)
 
-    assert result["totem_cluster_name"] == "test-cluster"
-    assert result["totem_config_version"] == 3
-    assert result["totem_interface"] == "vmbr0"
-    assert result["totem_ip_version"] == "ipv4"
-    assert result["totem_secauth"] == "on"
-    assert result["totem_version"] == 2
+    assert result["node1"] == {
+        "corosync_node_id": 1,
+        "corosync_quorum_votes": 1,
+        "corosync_ring_addresses": ["192.168.1.10", "10.10.10.10"],
+    }
+    assert result["10.0.0.3"]["corosync_ring_addresses"] == ["10.0.0.3", "10.2.0.3"]
+    assert result["10.0.0.3"]["corosync_quorum_votes"] == 2
+    assert transform_corosync_nodes([]) == {}
 
 
-def test_transform_cluster_config_empty():
-    """Test cluster config transformation with empty/None input."""
-    assert transform_cluster_config({}) == {}
-    assert transform_cluster_config([]) == {}
-    assert transform_cluster_config(None) == {}
+def test_transform_node_data_with_corosync_membership():
+    """Corosync fields are joined to /nodes entries by node name."""
+    nodes = [{"node": "node1"}, {"node": "node3"}]
+
+    result = transform_node_data(
+        nodes, "test-cluster", transform_corosync_nodes(MOCK_COROSYNC_NODES)
+    )
+
+    assert result[0]["corosync_node_id"] == 1
+    assert result[0]["corosync_ring_addresses"] == ["192.168.1.10", "10.10.10.10"]
+    # node3 is not in the corosync node list
+    assert result[1]["corosync_node_id"] is None
+    assert result[1]["corosync_ring_addresses"] is None
+
+
+def test_corosync_getters_read_config_subpaths():
+    """The corosync getters read the totem, nodes and qdevice subpaths, not the index."""
+    # Arrange
+    client = MagicMock()
+
+    # Act
+    get_corosync_totem(client)
+    get_corosync_nodes(client)
+    get_qdevice_status(client)
+
+    # Assert
+    client.cluster.config.totem.get.assert_called_once_with()
+    client.cluster.config.nodes.get.assert_called_once_with()
+    client.cluster.config.qdevice.get.assert_called_once_with()
+    client.cluster.config.get.assert_not_called()

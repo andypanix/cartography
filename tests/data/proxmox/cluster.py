@@ -95,29 +95,50 @@ MOCK_CLUSTER_OPTIONS = {
     },
 }
 
-MOCK_CLUSTER_CONFIG = {
-    "totem": {
-        "cluster_name": "test-cluster",
-        "config_version": 3,
-        "interface": "vmbr0",
-        "ip_version": "ipv4",
-        "secauth": "on",
-        "version": 2,
+# GET /cluster/config/totem. Values come from corosync.conf, so they are strings.
+MOCK_COROSYNC_TOTEM = {
+    "cluster_name": "test-cluster",
+    "config_version": "3",
+    "interface": {
+        "0": {"linknumber": "0"},
+        "1": {"linknumber": "1"},
     },
+    "ip_version": "ipv4-6",
+    "link_mode": "passive",
+    "secauth": "on",
+    "version": "2",
 }
 
-# Proxmox API can also return cluster config as a list of section dictionaries
-MOCK_CLUSTER_CONFIG_LIST = [
+# GET /cluster/config/nodes
+MOCK_COROSYNC_NODES = [
     {
-        "section": "totem",
-        "cluster_name": "test-cluster",
-        "config_version": 3,
-        "interface": "vmbr0",
-        "ip_version": "ipv4",
-        "secauth": "on",
-        "version": 2,
+        "node": "node1",
+        "name": "node1",
+        "nodeid": "1",
+        "quorum_votes": "1",
+        "ring0_addr": "192.168.1.10",
+        "ring1_addr": "10.10.10.10",
+    },
+    {
+        "node": "node2",
+        "name": "node2",
+        "nodeid": "2",
+        "quorum_votes": "1",
+        "ring0_addr": "192.168.1.11",
+        "ring1_addr": "10.10.10.11",
     },
 ]
+
+# GET /cluster/config/qdevice
+MOCK_QDEVICE_STATUS = {
+    "Algorithm": "Fifty-Fifty split",
+    "Echo reply": "OK",
+    "Last poll call": "2026-10-19T10:00:00 (cast vote)",
+    "Model": "Net",
+    "QNetd host": "192.168.1.50:5403",
+    "State": "Connected",
+    "Tie-breaker": "Node with lowest node ID",
+}
 
 MOCK_NODE_NETWORK_DATA = {
     "node1": [

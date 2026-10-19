@@ -2,16 +2,19 @@
 Integration tests for Proxmox cluster module.
 """
 
+import logging
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 import cartography.intel.proxmox.cluster
 from cartography.intel.proxmox.cluster import sync as cluster_sync
-from tests.data.proxmox.cluster import MOCK_CLUSTER_CONFIG
 from tests.data.proxmox.cluster import MOCK_CLUSTER_DATA
 from tests.data.proxmox.cluster import MOCK_CLUSTER_OPTIONS
+from tests.data.proxmox.cluster import MOCK_COROSYNC_NODES
+from tests.data.proxmox.cluster import MOCK_COROSYNC_TOTEM
 from tests.data.proxmox.cluster import MOCK_NODE_DATA
 from tests.data.proxmox.cluster import MOCK_NODE_NETWORK_DATA
+from tests.data.proxmox.cluster import MOCK_QDEVICE_STATUS
 from tests.integration.util import check_nodes
 from tests.integration.util import check_rels
 
@@ -34,11 +37,21 @@ TEST_CLUSTER_ID = "test-cluster"
 )
 @patch.object(
     cartography.intel.proxmox.cluster,
-    "get_cluster_config",
-    return_value=MOCK_CLUSTER_CONFIG,
+    "get_corosync_totem",
+    return_value=MOCK_COROSYNC_TOTEM,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_corosync_nodes",
+    new=lambda _client: MOCK_COROSYNC_NODES,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_qdevice_status",
+    new=lambda _client: MOCK_QDEVICE_STATUS,
 )
 def test_sync_cluster_and_nodes(
-    mock_get_config, mock_get_options, mock_get_nodes, mock_get_cluster, neo4j_session
+    mock_get_totem, mock_get_options, mock_get_nodes, mock_get_cluster, neo4j_session
 ):
     """
     Test that cluster and node sync correctly creates proper nodes and relationships.
@@ -111,13 +124,23 @@ def test_sync_cluster_and_nodes(
 )
 @patch.object(
     cartography.intel.proxmox.cluster,
-    "get_cluster_config",
-    return_value=MOCK_CLUSTER_CONFIG,
+    "get_corosync_totem",
+    return_value=MOCK_COROSYNC_TOTEM,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_corosync_nodes",
+    new=lambda _client: MOCK_COROSYNC_NODES,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_qdevice_status",
+    new=lambda _client: MOCK_QDEVICE_STATUS,
 )
 @patch.object(cartography.intel.proxmox.cluster, "get_node_network")
 def test_sync_node_network_interfaces(
     mock_get_node_network,
-    mock_get_config,
+    mock_get_totem,
     mock_get_options,
     mock_get_nodes,
     mock_get_cluster,
@@ -215,13 +238,23 @@ def test_sync_node_network_interfaces(
 )
 @patch.object(
     cartography.intel.proxmox.cluster,
-    "get_cluster_config",
-    return_value=MOCK_CLUSTER_CONFIG,
+    "get_corosync_totem",
+    return_value=MOCK_COROSYNC_TOTEM,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_corosync_nodes",
+    new=lambda _client: MOCK_COROSYNC_NODES,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_qdevice_status",
+    new=lambda _client: MOCK_QDEVICE_STATUS,
 )
 @patch.object(cartography.intel.proxmox.cluster, "get_node_network")
 def test_network_interface_properties(
     mock_get_node_network,
-    mock_get_config,
+    mock_get_totem,
     mock_get_options,
     mock_get_nodes,
     mock_get_cluster,
@@ -285,11 +318,21 @@ def test_network_interface_properties(
 )
 @patch.object(
     cartography.intel.proxmox.cluster,
-    "get_cluster_config",
-    return_value=MOCK_CLUSTER_CONFIG,
+    "get_corosync_totem",
+    return_value=MOCK_COROSYNC_TOTEM,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_corosync_nodes",
+    new=lambda _client: MOCK_COROSYNC_NODES,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_qdevice_status",
+    new=lambda _client: MOCK_QDEVICE_STATUS,
 )
 def test_cluster_enhanced_metadata(
-    mock_get_config, mock_get_options, mock_get_nodes, mock_get_cluster, neo4j_session
+    mock_get_totem, mock_get_options, mock_get_nodes, mock_get_cluster, neo4j_session
 ):
     """
     Test that enhanced cluster metadata fields are correctly captured.
@@ -342,11 +385,21 @@ def test_cluster_enhanced_metadata(
 )
 @patch.object(
     cartography.intel.proxmox.cluster,
-    "get_cluster_config",
-    return_value=MOCK_CLUSTER_CONFIG,
+    "get_corosync_totem",
+    return_value=MOCK_COROSYNC_TOTEM,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_corosync_nodes",
+    new=lambda _client: MOCK_COROSYNC_NODES,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_qdevice_status",
+    new=lambda _client: MOCK_QDEVICE_STATUS,
 )
 def test_node_enhanced_metadata(
-    mock_get_config, mock_get_options, mock_get_nodes, mock_get_cluster, neo4j_session
+    mock_get_totem, mock_get_options, mock_get_nodes, mock_get_cluster, neo4j_session
 ):
     """
     Test that enhanced node metadata fields are correctly captured.
@@ -403,13 +456,23 @@ def test_node_enhanced_metadata(
 )
 @patch.object(
     cartography.intel.proxmox.cluster,
-    "get_cluster_config",
-    return_value=MOCK_CLUSTER_CONFIG,
+    "get_corosync_totem",
+    return_value=MOCK_COROSYNC_TOTEM,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_corosync_nodes",
+    new=lambda _client: MOCK_COROSYNC_NODES,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_qdevice_status",
+    new=lambda _client: MOCK_QDEVICE_STATUS,
 )
 @patch.object(cartography.intel.proxmox.cluster, "get_node_network")
 def test_network_interface_enhanced_metadata(
     mock_get_node_network,
-    mock_get_config,
+    mock_get_totem,
     mock_get_options,
     mock_get_nodes,
     mock_get_cluster,
@@ -470,11 +533,21 @@ def test_network_interface_enhanced_metadata(
 )
 @patch.object(
     cartography.intel.proxmox.cluster,
-    "get_cluster_config",
-    return_value=MOCK_CLUSTER_CONFIG,
+    "get_corosync_totem",
+    return_value=MOCK_COROSYNC_TOTEM,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_corosync_nodes",
+    new=lambda _client: MOCK_COROSYNC_NODES,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_qdevice_status",
+    new=lambda _client: MOCK_QDEVICE_STATUS,
 )
 def test_cluster_configuration_metadata(
-    mock_get_config, mock_get_options, mock_get_nodes, mock_get_cluster, neo4j_session
+    mock_get_totem, mock_get_options, mock_get_nodes, mock_get_cluster, neo4j_session
 ):
     """
     Test that cluster configuration metadata from options and config endpoints is captured correctly.
@@ -543,20 +616,130 @@ def test_cluster_configuration_metadata(
         MATCH (cluster:ProxmoxCluster {id: $cluster_id})
         RETURN cluster.totem_cluster_name as totem_cluster_name,
                cluster.totem_config_version as totem_config_version,
-               cluster.totem_interface as totem_interface,
                cluster.totem_ip_version as totem_ip_version,
+               cluster.totem_link_mode as totem_link_mode,
+               cluster.totem_link_numbers as totem_link_numbers,
                cluster.totem_secauth as totem_secauth,
-               cluster.totem_version as totem_version
+               cluster.totem_version as totem_version,
+               cluster.qdevice_state as qdevice_state,
+               cluster.qdevice_model as qdevice_model,
+               cluster.qdevice_qnetd_host as qdevice_qnetd_host,
+               cluster.qdevice_algorithm as qdevice_algorithm,
+               cluster.qdevice_tie_breaker as qdevice_tie_breaker
         """,
         cluster_id=TEST_CLUSTER_ID,
     )
     data = result.single()
     assert data is not None
 
-    # Corosync/Totem configuration (from MOCK_CLUSTER_CONFIG)
+    # Corosync/Totem configuration (from MOCK_COROSYNC_TOTEM)
     assert data["totem_cluster_name"] == "test-cluster"
     assert data["totem_config_version"] == 3
-    assert data["totem_interface"] == "vmbr0"
-    assert data["totem_ip_version"] == "ipv4"
+    assert data["totem_ip_version"] == "ipv4-6"
+    assert data["totem_link_mode"] == "passive"
+    assert data["totem_link_numbers"] == [0, 1]
     assert data["totem_secauth"] == "on"
     assert data["totem_version"] == 2
+
+    # QDevice status (from MOCK_QDEVICE_STATUS)
+    assert data["qdevice_state"] == "Connected"
+    assert data["qdevice_model"] == "Net"
+    assert data["qdevice_qnetd_host"] == "192.168.1.50:5403"
+    assert data["qdevice_algorithm"] == "Fifty-Fifty split"
+    assert data["qdevice_tie_breaker"] == "Node with lowest node ID"
+
+    # Assert - Check corosync membership of the nodes (from MOCK_COROSYNC_NODES)
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxNode",
+        ["id", "corosync_node_id", "corosync_quorum_votes"],
+    ) == {
+        ("test-cluster/node1", 1, 1),
+        ("test-cluster/node2", 2, 1),
+    }
+    result = neo4j_session.run(
+        """
+        MATCH (n:ProxmoxNode {id: 'test-cluster/node1'})
+        RETURN n.corosync_ring_addresses AS rings
+        """
+    )
+    assert result.single()["rings"] == ["192.168.1.10", "10.10.10.10"]
+
+
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_cluster_status",
+    return_value=[{"type": "node", "name": "pve", "online": 1, "local": 1}],
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_nodes",
+    return_value=[{"node": "pve", "status": "online"}],
+)
+@patch.object(cartography.intel.proxmox.cluster, "get_cluster_options", return_value={})
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_node_network",
+    return_value=[],
+)
+@patch.object(cartography.intel.proxmox.cluster, "get_corosync_totem")
+@patch.object(cartography.intel.proxmox.cluster, "get_corosync_nodes")
+@patch.object(cartography.intel.proxmox.cluster, "get_qdevice_status")
+def test_sync_standalone_host_without_corosync(
+    mock_get_qdevice,
+    mock_get_corosync_nodes,
+    mock_get_totem,
+    mock_get_node_network,
+    mock_get_options,
+    mock_get_nodes,
+    mock_get_cluster,
+    neo4j_session,
+    caplog,
+):
+    """
+    A host that is not part of a cluster has no corosync.conf, so the totem
+    endpoint answers null. The sync logs that the host is not clustered, skips
+    the other corosync endpoints, and clears corosync properties left by an
+    earlier sync.
+    """
+    # Arrange - an earlier sync stored corosync settings for this host
+    standalone_id = "pve-example-com"
+    neo4j_session.run(
+        """
+        MERGE (c:ProxmoxCluster {id: $cluster_id})
+        SET c.totem_cluster_name = 'old', c.qdevice_state = 'Connected'
+        MERGE (n:ProxmoxNode {id: $node_id})
+        SET n.corosync_node_id = 1
+        """,
+        cluster_id=standalone_id,
+        node_id=f"{standalone_id}/pve",
+    )
+    # proxmoxer returns the "data" member of the response, which is null here.
+    mock_get_totem.return_value = None
+    common_job_parameters = {"UPDATE_TAG": TEST_UPDATE_TAG}
+
+    # Act
+    with caplog.at_level(logging.INFO, logger="cartography.intel.proxmox.cluster"):
+        result = cluster_sync(
+            neo4j_session,
+            MagicMock(),
+            "pve.example.com",
+            TEST_UPDATE_TAG,
+            common_job_parameters,
+        )
+
+    # Assert
+    assert result == {"cluster_id": standalone_id}
+    mock_get_corosync_nodes.assert_not_called()
+    mock_get_qdevice.assert_not_called()
+    assert "is not clustered" in caplog.text
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxCluster",
+        ["id", "totem_cluster_name", "qdevice_state"],
+    ) >= {(standalone_id, None, None)}
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxNode",
+        ["id", "corosync_node_id"],
+    ) >= {(f"{standalone_id}/pve", None)}

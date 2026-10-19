@@ -2,6 +2,9 @@
 Tests for Proxmox firewall module.
 """
 
+from unittest.mock import MagicMock
+
+from cartography.intel.proxmox.firewall import get_container_firewall_rules
 from cartography.intel.proxmox.firewall import transform_firewall_rule_data
 from cartography.intel.proxmox.firewall import transform_ipset_data
 
@@ -130,3 +133,21 @@ def test_transform_firewall_rule_data_sets_scope_targets():
     assert (cluster_rule["target_node_id"], cluster_rule["target_vmid"]) == (None, None)
     assert (node_rule["target_node_id"], node_rule["target_vmid"]) == ("c/node1", None)
     assert (vm_rule["target_node_id"], vm_rule["target_vmid"]) == (None, 100)
+
+
+def test_get_container_firewall_rules_reads_lxc_path():
+    """Container rules come from /nodes/{node}/lxc/{vmid}/firewall/rules."""
+    # Arrange
+    client = MagicMock()
+    client.nodes.return_value.lxc.return_value.firewall.rules.get.return_value = [
+        {"pos": 0}
+    ]
+
+    # Act
+    rules = get_container_firewall_rules(client, "node2", 200)
+
+    # Assert
+    assert rules == [{"pos": 0}]
+    client.nodes.assert_called_once_with("node2")
+    client.nodes.return_value.lxc.assert_called_once_with(200)
+    client.nodes.return_value.qemu.assert_not_called()

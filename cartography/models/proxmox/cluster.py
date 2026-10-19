@@ -94,10 +94,6 @@ class ProxmoxClusterNodeProperties(CartographyNodeProperties):
         "next_id_upper",
         description="Upper bound of the range for automatically assigned VM IDs.",
     )
-    totem_interface: PropertyRef = PropertyRef(
-        "totem_interface",
-        description="Corosync totem interface configuration.",
-    )
     totem_cluster_name: PropertyRef = PropertyRef(
         "totem_cluster_name",
         description="Cluster name in the Corosync totem configuration.",
@@ -117,6 +113,34 @@ class ProxmoxClusterNodeProperties(CartographyNodeProperties):
     totem_version: PropertyRef = PropertyRef(
         "totem_version",
         description="Corosync totem protocol version.",
+    )
+    totem_link_mode: PropertyRef = PropertyRef(
+        "totem_link_mode",
+        description="Corosync link mode, such as passive.",
+    )
+    totem_link_numbers: PropertyRef = PropertyRef(
+        "totem_link_numbers",
+        description="Numbers of the Corosync links configured in the totem section.",
+    )
+    qdevice_state: PropertyRef = PropertyRef(
+        "qdevice_state",
+        description="State of the Corosync QDevice, such as Connected; empty without a QDevice.",
+    )
+    qdevice_model: PropertyRef = PropertyRef(
+        "qdevice_model",
+        description="QDevice model, such as Net.",
+    )
+    qdevice_qnetd_host: PropertyRef = PropertyRef(
+        "qdevice_qnetd_host",
+        description="Address and port of the QNetd server the QDevice uses.",
+    )
+    qdevice_algorithm: PropertyRef = PropertyRef(
+        "qdevice_algorithm",
+        description="QDevice quorum algorithm, such as Fifty-Fifty split.",
+    )
+    qdevice_tie_breaker: PropertyRef = PropertyRef(
+        "qdevice_tie_breaker",
+        description="QDevice tie-breaker rule.",
     )
 
 
@@ -218,6 +242,18 @@ class ProxmoxNodeNodeProperties(CartographyNodeProperties):
     idle: PropertyRef = PropertyRef(
         "idle",
         description="CPU idle fraction.",
+    )
+    corosync_node_id: PropertyRef = PropertyRef(
+        "corosync_node_id",
+        description="Corosync node ID; empty on a standalone host.",
+    )
+    corosync_quorum_votes: PropertyRef = PropertyRef(
+        "corosync_quorum_votes",
+        description="Number of quorum votes of the node in Corosync.",
+    )
+    corosync_ring_addresses: PropertyRef = PropertyRef(
+        "corosync_ring_addresses",
+        description="Corosync link addresses of the node, ordered by link number.",
     )
 
 

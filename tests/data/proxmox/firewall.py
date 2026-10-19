@@ -56,6 +56,43 @@ MOCK_NODE_FIREWALL_RULES = {
     ],
 }
 
+# Keyed by vmid. 100 is a QEMU VM on node1, 200 an LXC container on node2.
+MOCK_VM_FIREWALL_RULES = {
+    100: [
+        {
+            "pos": 0,
+            "type": "in",
+            "action": "ACCEPT",
+            "enable": 1,
+            "proto": "tcp",
+            "dport": "443",
+            "comment": "Web server",
+        },
+    ],
+}
+
+MOCK_CONTAINER_FIREWALL_RULES = {
+    200: [
+        {
+            "pos": 0,
+            "type": "in",
+            "action": "ACCEPT",
+            "enable": 1,
+            "proto": "tcp",
+            "dport": "5432",
+            "source": "10.0.0.0/24",
+            "comment": "PostgreSQL from app network",
+        },
+        {
+            "pos": 1,
+            "type": "in",
+            "action": "DROP",
+            "enable": 1,
+            "comment": "Drop everything else",
+        },
+    ],
+}
+
 MOCK_CLUSTER_IPSETS = [
     {
         "name": "management-ips",

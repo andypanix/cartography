@@ -45,7 +45,7 @@ SCOPED_IDS = {
     "ProxmoxGroup": "admins",
     "ProxmoxRole": "Administrator",
     "ProxmoxACL": "/vms/100:root@pam:Administrator",
-    "ProxmoxFirewallRule": "cluster:0",
+    "ProxmoxFirewallRule": "vm:100:0",
     "ProxmoxCertificate": "pve:pveproxy-ssl.pem",
 }
 
@@ -72,7 +72,17 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
         ),
         (cluster, "get_nodes", [{"node": "pve", "status": "online"}]),
         (cluster, "get_cluster_options", {}),
-        (cluster, "get_cluster_config", {}),
+        (
+            cluster,
+            "get_corosync_totem",
+            {"cluster_name": cluster_id, "config_version": "1"},
+        ),
+        (
+            cluster,
+            "get_corosync_nodes",
+            [{"node": "pve", "name": "pve", "nodeid": "1", "ring0_addr": "10.0.0.1"}],
+        ),
+        (cluster, "get_qdevice_status", {}),
         (cluster, "get_node_network", [{"iface": "vmbr0", "type": "bridge"}]),
         (
             compute,
@@ -132,13 +142,17 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
             "get_acls",
             [{"path": "/vms/100", "roleid": "Administrator", "ugid": "root@pam"}],
         ),
-        (
-            firewall,
-            "get_cluster_firewall_rules",
-            [{"pos": 0, "type": "in", "action": "ACCEPT"}],
-        ),
+        # The only rule is a guest rule, so the APPLIES_TO_VM matcher (vmid and
+        # cluster_id) is checked across clusters that share vmid 100.
+        (firewall, "get_cluster_firewall_rules", []),
         (firewall, "get_cluster_ipsets", []),
         (firewall, "get_node_firewall_rules", []),
+        (
+            firewall,
+            "get_vm_firewall_rules",
+            [{"pos": 0, "type": "in", "action": "ACCEPT", "dport": "22"}],
+        ),
+        (firewall, "get_container_firewall_rules", []),
         (
             cartography.intel.proxmox.certificate,
             "get_node_certificates",
@@ -238,6 +252,7 @@ def test_two_clusters_with_identical_names_stay_separate(neo4j_session):
         ("ProxmoxACL", "APPLIES_TO_USER", "ProxmoxUser"),
         ("ProxmoxACL", "GRANTS_ACCESS_TO", "ProxmoxVM"),
         ("ProxmoxUser", "HAS_PERMISSION", "ProxmoxVM"),
+        ("ProxmoxFirewallRule", "APPLIES_TO_VM", "ProxmoxVM"),
     )
     for source, rel, target in cluster_edges:
         assert check_rels(
