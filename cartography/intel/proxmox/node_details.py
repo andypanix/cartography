@@ -12,8 +12,13 @@ Follows Cartography's Get → Transform → Load pattern.
 import logging
 import re
 from typing import Any
+from urllib.parse import unquote
+from urllib.parse import urlsplit
+from urllib.parse import urlunsplit
 
 import neo4j
+import requests
+from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
@@ -81,6 +86,19 @@ SMART_TEXT_PATTERNS = {
 STANDARD_REPO_ENTERPRISE = "enterprise"
 STANDARD_REPO_NO_SUBSCRIPTION = "no-subscription"
 STANDARD_REPO_TEST = "test"
+
+# Errors of one API call that skip one device or node instead of the whole sync:
+# HTTP errors (such as a 500 from smartctl, a 595 for an unreachable node or a
+# 403 from a custom role) and connection errors that outlast the retries.
+PROXMOX_API_ERRORS = (ResourceException, requests.exceptions.RequestException)
+
+# Query parameters of an APT repository URI that can carry a credential.
+URI_SECRET_QUERY_PARAM = re.compile(
+    r"token|key|pass|secret|auth|sig|credential|session",
+    re.IGNORECASE,
+)
+# userinfo in a URI embedded in free text, such as an APT parse error.
+URI_USERINFO_IN_TEXT = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)[^/\s@]+@")
 
 
 # ============================================================================
@@ -313,6 +331,39 @@ def get_pci_mdev_types(
 # ============================================================================
 # TRANSFORM helpers
 # ============================================================================
+
+
+def strip_uri_credentials(uri: Any) -> Any:
+    """
+    Remove credentials from a repository URI.
+
+    Drops the userinfo (user:password@) and the query parameters whose name
+    suggests a credential, such as token, key, auth or signature.
+
+    :param uri: Repository URI, such as https://user:token@repo.example.com/debian
+    :return: URI without credentials; non-string values are returned unchanged
+    """
+    if not isinstance(uri, str):
+        return uri
+    try:
+        parts = urlsplit(uri)
+    except ValueError:
+        return URI_USERINFO_IN_TEXT.sub(r"\g<scheme>", uri)
+    netloc = parts.netloc.rpartition("@")[2]
+    # Split by hand to keep the encoding of the parameters that stay.
+    query = "&".join(
+        param
+        for param in parts.query.split("&")
+        if param and not URI_SECRET_QUERY_PARAM.search(unquote(param.split("=")[0]))
+    )
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+
+
+def _strip_text_credentials(text: Any) -> Any:
+    """Remove the userinfo of URIs embedded in free text."""
+    if not isinstance(text, str):
+        return text
+    return URI_USERINFO_IN_TEXT.sub(r"\g<scheme>", text)
 
 
 def _leading_int(value: Any) -> int | None:
@@ -760,6 +811,8 @@ def transform_apt_repositories(
     """
     Transform the APT repositories configured on a node.
 
+    Credentials embedded in the repository URIs are removed.
+
     :param repo_info: Response of the APT repositories endpoint
     :param node_name: Node name
     :param cluster_id: Parent cluster ID
@@ -788,10 +841,14 @@ def transform_apt_repositories(
                         else None
                     ),
                     "types": repo.get("Types"),
-                    "uris": repo.get("URIs"),
+                    "uris": (
+                        [strip_uri_credentials(uri) for uri in repo["URIs"]]
+                        if isinstance(repo.get("URIs"), list)
+                        else strip_uri_credentials(repo.get("URIs"))
+                    ),
                     "suites": repo.get("Suites"),
                     "components": repo.get("Components"),
-                    "comment": repo.get("Comment"),
+                    "comment": _strip_text_credentials(repo.get("Comment")),
                 },
             )
     return result
@@ -822,7 +879,7 @@ def transform_apt_repository_summary(repo_info: dict[str, Any]) -> dict[str, Any
             handle for handle, status in status_by_handle.items() if status
         ),
         "apt_repository_errors": [
-            f"{error.get('path')}: {error.get('error')}"
+            _strip_text_credentials(f"{error.get('path')}: {error.get('error')}")
             for error in (repo_info or {}).get("errors") or []
         ],
     }
@@ -1065,17 +1122,71 @@ def cleanup(
 # ============================================================================
 
 
+def _get_smart_or_empty(
+    proxmox_client: Any,
+    node_name: str,
+    devpath: str,
+) -> dict[str, Any]:
+    """
+    Get the SMART data of one disk, or an empty dict when it cannot be read.
+
+    smartctl fails on devices it cannot open, such as RAID virtual disks, and
+    Proxmox answers with an HTTP error. The disk is still synced, without SMART
+    values.
+    """
+    try:
+        return get_disk_smart(proxmox_client, node_name, devpath)
+    except PROXMOX_API_ERRORS as e:
+        logger.warning(
+            "Could not read SMART data of disk %s on Proxmox node %s, "
+            "syncing it without SMART values: %s",
+            devpath,
+            node_name,
+            e,
+        )
+        return {}
+
+
+def _get_mdev_types_or_none(
+    proxmox_client: Any,
+    node_name: str,
+    pci_id: str,
+) -> list[dict[str, Any]] | None:
+    """
+    Get the mdev types of one PCI device, or None when they cannot be read.
+
+    The device is still synced, without mdev types.
+    """
+    try:
+        return get_pci_mdev_types(proxmox_client, node_name, pci_id)
+    except PROXMOX_API_ERRORS as e:
+        logger.warning(
+            "Could not read mediated device types of PCI device %s on Proxmox "
+            "node %s, syncing it without them: %s",
+            pci_id,
+            node_name,
+            e,
+        )
+        return None
+
+
 def _collect_node(
     proxmox_client: Any,
     node_name: str,
     cluster_id: str,
-    data_by_label: dict[str, list[dict[str, Any]]],
-) -> None:
-    """Read and transform every detail of one node into data_by_label."""
+) -> dict[str, list[dict[str, Any]]]:
+    """
+    Read and transform every detail of one node.
+
+    :return: Transformed records keyed by node label
+    """
+    data_by_label: dict[str, list[dict[str, Any]]] = {
+        schema.label: [] for schema in NODE_DETAIL_SCHEMAS
+    }
     # Storage
     raw_disks = get_node_disks(proxmox_client, node_name)
     smart_by_devpath = {
-        disk["devpath"]: get_disk_smart(proxmox_client, node_name, disk["devpath"])
+        disk["devpath"]: _get_smart_or_empty(proxmox_client, node_name, disk["devpath"])
         for disk in raw_disks
     }
     disks = transform_disks(raw_disks, smart_by_devpath, node_name, cluster_id)
@@ -1152,14 +1263,17 @@ def _collect_node(
         ),
     )
     pci_devices = get_pci_devices(proxmox_client, node_name)
-    mdev_types_by_id = {
-        device["id"]: get_pci_mdev_types(proxmox_client, node_name, device["id"])
-        for device in pci_devices
-        if device.get("mdev")
-    }
+    mdev_types_by_id: dict[str, list[dict[str, Any]]] = {}
+    for device in pci_devices:
+        if not device.get("mdev"):
+            continue
+        mdev_types = _get_mdev_types_or_none(proxmox_client, node_name, device["id"])
+        if mdev_types is not None:
+            mdev_types_by_id[device["id"]] = mdev_types
     data_by_label["ProxmoxPCIDevice"].extend(
         transform_pci_devices(pci_devices, mdev_types_by_id, node_name, cluster_id),
     )
+    return data_by_label
 
 
 @timeit
@@ -1175,6 +1289,14 @@ def sync(
 
     Offline nodes are skipped, so their details are removed by the cleanup
     until they are back online.
+
+    A node whose details cannot be read (for example a 595 when it is
+    unreachable, or a 403 from a custom role) is logged and skipped, and the
+    other nodes are still synced. The cleanup then does not run for this sync,
+    so the failed node keeps the details of its last successful sync; stale
+    details of the other nodes are removed by the next sync in which every
+    online node succeeds. A SMART or mdev error on one device does not fail
+    the node: the device is synced without those values.
 
     :param neo4j_session: Neo4j session
     :param proxmox_client: Proxmox API client
@@ -1193,14 +1315,37 @@ def sync(
     data_by_label: dict[str, list[dict[str, Any]]] = {
         schema.label: [] for schema in NODE_DETAIL_SCHEMAS
     }
+    failed_nodes: list[str] = []
     for node_name in online_nodes:
-        _collect_node(proxmox_client, node_name, cluster_id, data_by_label)
+        try:
+            node_data = _collect_node(proxmox_client, node_name, cluster_id)
+        except PROXMOX_API_ERRORS as e:
+            # Nothing of a failed node is loaded, so its previous details stay
+            # untouched instead of being partly overwritten.
+            logger.warning(
+                "Could not read details of Proxmox node %s, skipping it: %s",
+                node_name,
+                e,
+            )
+            failed_nodes.append(node_name)
+            continue
+        for label, records in node_data.items():
+            data_by_label[label].extend(records)
 
     load_node_details(neo4j_session, data_by_label, cluster_id, update_tag)
-    cleanup(neo4j_session, common_job_parameters)
+    if failed_nodes:
+        # The cleanup is scoped to the cluster, so it would also delete the
+        # previous details of the failed nodes. Skip it for this sync.
+        logger.warning(
+            "Skipping cleanup of Proxmox node details because %d nodes failed: %s",
+            len(failed_nodes),
+            ", ".join(failed_nodes),
+        )
+    else:
+        cleanup(neo4j_session, common_job_parameters)
 
     logger.info(
         "Synced details of %d Proxmox nodes: %s",
-        len(online_nodes),
+        len(online_nodes) - len(failed_nodes),
         ", ".join(f"{len(v)} {k}" for k, v in data_by_label.items()),
     )

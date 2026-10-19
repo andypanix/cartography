@@ -217,6 +217,46 @@ def test_transform_apt_repositories():
     }
 
 
+def test_strip_uri_credentials():
+    strip = node_details.strip_uri_credentials
+    assert (
+        strip("https://user:token@repo.example.com/debian")
+        == "https://repo.example.com/debian"
+    )
+    assert strip("https://user@repo.example.com:8443/x") == (
+        "https://repo.example.com:8443/x"
+    )
+    assert strip("https://repo/x?dist=1&Token=abc&X-Amz-Signature=s&p=2") == (
+        "https://repo/x?dist=1&p=2"
+    )
+    assert strip("https://repo/x?api%5Fkey=abc") == "https://repo/x"
+    assert strip("http://deb.debian.org/debian") == "http://deb.debian.org/debian"
+    assert strip("cdrom:[Debian GNU/Linux]/") == "cdrom:[Debian GNU/Linux]/"
+    # Not parseable as a URL: the userinfo is still removed
+    assert strip("https://user:pw@[::1/debian") == "https://[::1/debian"
+    assert strip(None) is None
+
+
+def test_transform_apt_repositories_strips_credentials():
+    repos = node_details.transform_apt_repositories(
+        data.MOCK_APT_REPOSITORIES_WITH_CREDENTIALS,
+        NODE,
+        CLUSTER,
+    )
+    assert repos[0]["uris"] == [
+        "https://repo.example.com/debian",
+        "https://mirror.example.com/x?dist=1",
+    ]
+    assert repos[0]["comment"] == "mirror https://repo.example.com/debian"
+    summary = node_details.transform_apt_repository_summary(
+        data.MOCK_APT_REPOSITORIES_WITH_CREDENTIALS,
+    )
+    assert summary["apt_repository_errors"] == [
+        "/etc/apt/sources.list.d/private.list: "
+        "bad line: deb https://repo.example.com/debian",
+    ]
+
+
 def test_transform_subscription_never_keeps_secrets():
     sub = node_details.transform_subscription(data.MOCK_SUBSCRIPTION, NODE, CLUSTER)
 

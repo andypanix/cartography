@@ -7,6 +7,8 @@ from typing import Any
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from proxmoxer.core import ResourceException
+
 import cartography.intel.proxmox.cluster
 import cartography.intel.proxmox.node_details as node_details
 from tests.data.proxmox import node_details as data
@@ -53,10 +55,16 @@ def _getters(nodes: list[dict[str, Any]]) -> list[tuple[Any, str, Any]]:
     ]
 
 
-def _sync(neo4j_session, update_tag: int, nodes: list[dict[str, Any]]) -> dict:
+def _sync(
+    neo4j_session,
+    update_tag: int,
+    nodes: list[dict[str, Any]],
+    overrides: dict[str, Any] | None = None,
+) -> dict:
     mocks = {}
     with ExitStack() as stack:
         for module, name, value in _getters(nodes):
+            value = (overrides or {}).get(name, value)
             kwargs = (
                 {"side_effect": value} if callable(value) else {"return_value": value}
             )
@@ -293,3 +301,153 @@ def test_node_details_cleanup_when_node_goes_offline(neo4j_session):
     # Assert - its details are removed
     for schema in node_details.NODE_DETAIL_SCHEMAS:
         assert check_nodes(neo4j_session, schema.label, ["id"]) == set(), schema.label
+
+
+def _api_error(status_code: int) -> ResourceException:
+    return ResourceException(status_code, "error", "mocked API error")
+
+
+def test_smart_error_keeps_disk_without_smart_values(neo4j_session):
+    # Arrange - smartctl cannot open the RAID virtual disk /dev/sdc
+    _seed(neo4j_session)
+
+    def smart(client, node, devpath):
+        if devpath == "/dev/sdc":
+            raise _api_error(500)
+        return data.MOCK_SMART[devpath]
+
+    # Act
+    _sync(
+        neo4j_session,
+        TEST_UPDATE_TAG,
+        [{"node": "node1", "status": "online"}],
+        {"get_disk_smart": smart},
+    )
+
+    # Assert - every disk is loaded, sdc without SMART values
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxPhysicalDisk",
+        ["name", "smart_health", "power_on_hours"],
+    ) == {
+        ("sda", "PASSED", 12045),
+        ("sdb", "PASSED", 12001),
+        ("nvme0n1", "PASSED", 8760),
+        ("sdc", None, None),
+    }
+    # The rest of the node is synced
+    assert check_nodes(neo4j_session, "ProxmoxZFSPool", ["id"])
+    assert check_nodes(neo4j_session, "ProxmoxPCIDevice", ["id"])
+
+
+def test_mdev_error_keeps_pci_device_without_mdev_types(neo4j_session):
+    # Arrange
+    _seed(neo4j_session)
+
+    def mdev(client, node, pci_id):
+        raise _api_error(500)
+
+    # Act
+    _sync(
+        neo4j_session,
+        TEST_UPDATE_TAG,
+        [{"node": "node1", "status": "online"}],
+        {"get_pci_mdev_types": mdev},
+    )
+
+    # Assert - the GPU is loaded, without mdev types
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxPCIDevice",
+        ["pci_id", "mdev", "mdev_types", "mdev_available"],
+    ) == {
+        ("0000:01:00.0", True, None, None),
+        ("0000:02:00.0", False, None, None),
+    }
+
+
+def test_node_error_keeps_previous_details_of_that_node(neo4j_session):
+    # Arrange - both nodes synced once
+    _seed(neo4j_session)
+    both_online = [
+        {"node": "node1", "status": "online"},
+        {"node": "node2", "status": "online"},
+    ]
+    _sync(neo4j_session, TEST_UPDATE_TAG, both_online)
+    node2_details = {
+        schema.label: check_nodes(
+            neo4j_session,
+            schema.label,
+            ["id", "node_name"],
+        )
+        for schema in node_details.NODE_DETAIL_SCHEMAS
+    }
+
+    # Act - node2 is unreachable in the next sync
+    def disks(client, node):
+        if node == "node2":
+            raise _api_error(595)
+        return data.MOCK_DISKS
+
+    mocks = _sync(
+        neo4j_session,
+        TEST_UPDATE_TAG + 1,
+        both_online,
+        {"get_node_disks": disks},
+    )
+
+    # Assert - node1 is refreshed, node2 is not queried further and keeps its
+    # previous details with the old update tag
+    assert mocks["get_node_config"].call_count == 1
+    for schema in node_details.NODE_DETAIL_SCHEMAS:
+        assert (
+            check_nodes(neo4j_session, schema.label, ["id", "node_name"])
+            == node2_details[schema.label]
+        ), schema.label
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxPhysicalDisk",
+        ["node_name", "lastupdated"],
+    ) == {("node1", TEST_UPDATE_TAG + 1), ("node2", TEST_UPDATE_TAG)}
+
+    # Act - node2 answers again but has no disks any more
+    def disks_back(client, node):
+        return [] if node == "node2" else data.MOCK_DISKS
+
+    _sync(
+        neo4j_session,
+        TEST_UPDATE_TAG + 2,
+        both_online,
+        {"get_node_disks": disks_back},
+    )
+
+    # Assert - the cleanup runs again and removes the stale node2 disks
+    assert check_nodes(neo4j_session, "ProxmoxPhysicalDisk", ["node_name"]) == {
+        ("node1",),
+    }
+
+
+def test_apt_repository_credentials_are_not_stored(neo4j_session):
+    # Arrange
+    _seed(neo4j_session)
+
+    # Act
+    _sync(
+        neo4j_session,
+        TEST_UPDATE_TAG,
+        [{"node": "node1", "status": "online"}],
+        {"get_apt_repositories": data.MOCK_APT_REPOSITORIES_WITH_CREDENTIALS},
+    )
+
+    # Assert
+    assert neo4j_session.run(
+        "MATCH (r:ProxmoxAPTRepository) RETURN r.uris AS uris",
+    ).single()["uris"] == [
+        "https://repo.example.com/debian",
+        "https://mirror.example.com/x?dist=1",
+    ]
+    stored = neo4j_session.run(
+        "MATCH (n) WHERE n:ProxmoxAPTRepository OR n:ProxmoxNodeConfig "
+        "RETURN properties(n) AS p",
+    ).data()
+    assert "s3cr3t" not in repr(stored)

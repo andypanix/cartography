@@ -163,7 +163,7 @@ class ProxmoxAPTRepositoryNodeProperties(CartographyNodeProperties):
     )
     uris: PropertyRef = PropertyRef(
         "uris",
-        description="URIs of the repository.",
+        description="URIs of the repository, without user names, passwords or credential query parameters.",
     )
     suites: PropertyRef = PropertyRef(
         "suites",

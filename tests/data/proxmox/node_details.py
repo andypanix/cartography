@@ -359,6 +359,36 @@ MOCK_APT_REPOSITORIES = {
     ],
 }
 
+MOCK_APT_REPOSITORIES_WITH_CREDENTIALS = {
+    "errors": [
+        {
+            "path": "/etc/apt/sources.list.d/private.list",
+            "error": "bad line: deb https://ci:s3cr3t@repo.example.com/debian",
+        },
+    ],
+    "files": [
+        {
+            "path": "/etc/apt/sources.list.d/private.list",
+            "file-type": "list",
+            "repositories": [
+                {
+                    "Types": ["deb"],
+                    "URIs": [
+                        "https://ci:s3cr3t@repo.example.com/debian",
+                        "https://mirror.example.com/x?access_token=s3cr3t&dist=1",
+                    ],
+                    "Suites": ["trixie"],
+                    "Components": ["main"],
+                    "Enabled": True,
+                    "FileType": "list",
+                    "Comment": "mirror https://ci:s3cr3t@repo.example.com/debian",
+                },
+            ],
+        },
+    ],
+    "standard-repos": [],
+}
+
 MOCK_SUBSCRIPTION = {
     "status": "active",
     "level": "c",
