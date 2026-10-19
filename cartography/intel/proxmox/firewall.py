@@ -12,6 +12,7 @@ from typing import NamedTuple
 import neo4j
 
 from cartography.client.core.tx import load
+from cartography.client.core.tx import read_list_of_values_tx
 from cartography.intel.proxmox import cluster
 from cartography.intel.proxmox import compute
 from cartography.intel.proxmox.util import cluster_scoped_id
@@ -827,6 +828,17 @@ def load_firewall_options(
             lastupdated=update_tag,
             CLUSTER_ID=cluster_id,
         )
+    # Guest options are set on the VM nodes of the compute sync. A guest
+    # created after that sync gets its options on the next sync, instead of a
+    # VM node that holds only firewall options.
+    known_vm_ids = set(
+        neo4j_session.execute_read(
+            read_list_of_values_tx,
+            "MATCH (vm:ProxmoxVM) WHERE vm.id IN $VM_IDS RETURN vm.id",
+            VM_IDS=[options["id"] for options in guest_options],
+        ),
+    )
+    guest_options = [o for o in guest_options if o["id"] in known_vm_ids]
     if guest_options:
         load(
             neo4j_session,

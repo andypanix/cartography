@@ -6,7 +6,7 @@ Proxmox names such as node `pve`, storage `local`, or user `root@pam` are only u
 
 The module ingests:
 
-- **Cluster topology**: cluster settings, nodes, and node network interfaces. On a cluster, also the Corosync totem settings, the QDevice status, and each node's Corosync ID, votes, and link addresses. A standalone host has no Corosync configuration, so these properties stay empty.
+- **Cluster topology**: cluster settings, nodes, and node network interfaces. On a cluster, also the Corosync totem settings, the QDevice status, and each node's Corosync ID, votes, and link addresses. A standalone host has no Corosync configuration, so these properties stay empty. When the QDevice status cannot be read, Cartography logs a warning and syncs the cluster without it.
 - **Compute**: QEMU virtual machines and LXC containers, with their disks and network interfaces. Guest agent data (OS, hostname, guest IP addresses) is optional.
 - **Guest details**: snapshots and their parent chain, HA state and pool, the running QEMU machine and version, cloud-init values, IP addresses of running containers, and custom CPU models (Proxmox VE 9). Cloud-init passwords are never stored: Cartography records only whether one is set, and stores public SSH keys as a count and SHA256 fingerprints. With the guest agent enabled, it also reads the mounted filesystems, logged-in users and time zone of running VMs.
 - **Storage**: storage backends and the nodes where they are available. On Proxmox VE 9, shared storage also gets its instance identity.
@@ -33,7 +33,7 @@ Node hardware, software and system settings are read only from nodes that are on
 
 When the details of one online node cannot be read, for example because the node is unreachable or the API user lacks a privilege on it, Cartography logs a warning, syncs the other nodes, and skips the cleanup of node details for that sync, so the failed node keeps the details of its last successful sync. A disk whose SMART data cannot be read, such as a RAID virtual disk, is synced without SMART values, and a PCI device whose mediated device types cannot be read is synced without them.
 
-User names, passwords and credential query parameters (such as `token` or `key`) are removed from APT repository URIs before they are stored.
+User names, passwords and credential query parameters (such as `token` or `key`) are removed from APT repository URIs and from the datacenter HTTP proxy URL before they are stored.
 
 A `ProxmoxPhysicalDisk` keeps the kernel device name in `name`, such as `sdb` or `nvme0n1`, next to `devpath`, so it can be matched to the devices Ceph reports for an OSD. ZFS pools, LVM volume groups and managed directories link to a disk with `USES_DISK` when their device is named by kernel name, partition, or a `/dev/disk/by-id` name built from the disk WWN or serial. A device named by UUID is not linked.
 

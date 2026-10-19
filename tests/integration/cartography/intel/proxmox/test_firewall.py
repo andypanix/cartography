@@ -356,3 +356,40 @@ def test_sync_firewall(
         ("test-cluster/node1/qemu/101", 101, False, None, None, True),
         ("test-cluster/node2/lxc/200", 200, False, None, None, True),
     }
+
+
+def test_guest_options_do_not_create_vm_nodes(neo4j_session):
+    """
+    Options of a guest that the compute sync did not load, such as one created
+    during the sync, are not loaded, so no VM node holds only firewall options.
+    """
+    # Arrange
+    neo4j_session.run("MATCH (n) DETACH DELETE n")
+    _seed_graph(neo4j_session)
+    known = f"{TEST_CLUSTER_ID}/node1/qemu/100"
+    unknown = f"{TEST_CLUSTER_ID}/node1/qemu/999"
+    guest_options = [
+        FW.transform_firewall_options({"enable": 1}, FW.GUEST_FIREWALL_OPTIONS, vm_id)
+        for vm_id in (known, unknown)
+    ]
+    cluster_options = FW.transform_firewall_options(
+        {}, FW.CLUSTER_FIREWALL_OPTIONS, TEST_CLUSTER_ID
+    )
+
+    # Act
+    FW.load_firewall_options(
+        neo4j_session,
+        cluster_options,
+        [],
+        guest_options,
+        TEST_CLUSTER_ID,
+        TEST_UPDATE_TAG,
+    )
+
+    # Assert
+    vm_ids = {vm_id for (vm_id,) in check_nodes(neo4j_session, "ProxmoxVM", ["id"])}
+    assert known in vm_ids
+    assert unknown not in vm_ids
+    assert check_nodes(neo4j_session, "ProxmoxVM", ["id", "firewall_enabled"]) >= {
+        (known, True)
+    }

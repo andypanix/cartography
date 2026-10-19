@@ -6,6 +6,8 @@ import logging
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from proxmoxer.core import ResourceException
+
 import cartography.intel.proxmox.cluster
 from cartography.intel.proxmox.cluster import sync as cluster_sync
 from tests.data.proxmox.cluster import MOCK_CLUSTER_DATA
@@ -743,3 +745,68 @@ def test_sync_standalone_host_without_corosync(
         "ProxmoxNode",
         ["id", "corosync_node_id"],
     ) >= {(f"{standalone_id}/pve", None)}
+
+
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_cluster_status",
+    return_value=MOCK_CLUSTER_DATA,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster, "get_nodes", return_value=MOCK_NODE_DATA
+)
+@patch.object(cartography.intel.proxmox.cluster, "get_cluster_options", return_value={})
+@patch.object(cartography.intel.proxmox.cluster, "get_node_network", return_value=[])
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_corosync_totem",
+    return_value=MOCK_COROSYNC_TOTEM,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_corosync_nodes",
+    return_value=MOCK_COROSYNC_NODES,
+)
+@patch.object(
+    cartography.intel.proxmox.cluster,
+    "get_qdevice_status",
+    side_effect=ResourceException(500, "Internal Server Error", "qnetd timeout"),
+)
+def test_sync_cluster_when_qdevice_status_fails(
+    mock_get_qdevice,
+    mock_get_corosync_nodes,
+    mock_get_totem,
+    mock_get_node_network,
+    mock_get_options,
+    mock_get_nodes,
+    mock_get_cluster,
+    neo4j_session,
+    caplog,
+):
+    """
+    The QDevice status is optional: an error there is logged and the cluster
+    and its nodes still sync, without QDevice fields.
+    """
+    # Arrange
+    neo4j_session.run("MATCH (n) DETACH DELETE n")
+
+    # Act
+    with caplog.at_level(logging.WARNING, logger="cartography.intel.proxmox.cluster"):
+        result = cluster_sync(
+            neo4j_session,
+            MagicMock(),
+            "pve.example.com",
+            TEST_UPDATE_TAG,
+            {"UPDATE_TAG": TEST_UPDATE_TAG},
+        )
+
+    # Assert
+    assert result == {"cluster_id": "test-cluster"}
+    assert "Could not read the Proxmox QDevice status" in caplog.text
+    assert check_nodes(neo4j_session, "ProxmoxCluster", ["id", "qdevice_state"]) == {
+        ("test-cluster", None)
+    }
+    assert check_nodes(neo4j_session, "ProxmoxNode", ["id"]) == {
+        ("test-cluster/node1",),
+        ("test-cluster/node2",),
+    }

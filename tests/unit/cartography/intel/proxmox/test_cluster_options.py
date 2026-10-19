@@ -44,3 +44,24 @@ def test_transform_cluster_options_without_options():
     assert result["migration_type"] is None
     assert result["migration_bandwidth_limit"] is None
     assert result["next_id_lower"] is None
+
+
+def test_transform_cluster_options_migration_limit_falls_back_to_default():
+    """Proxmox applies the default bandwidth limit to migrations without their own."""
+    result = transform_cluster_options({"bwlimit": "default=5000"})
+    assert result["migration_bandwidth_limit"] == 5000
+
+
+def test_transform_cluster_options_ignores_infinite_numbers():
+    """A value without an int form, such as inf or nan, is stored as unset."""
+    for value in ("inf", "nan", float("inf")):
+        result = transform_cluster_options({"bwlimit": {"migration": value}})
+        assert result["migration_bandwidth_limit"] is None
+
+
+def test_transform_cluster_options_strips_proxy_credentials():
+    """The user and password of the HTTP proxy never reach the graph."""
+    result = transform_cluster_options(
+        {"http_proxy": "http://user:secret@proxy.example.com:3128"},
+    )
+    assert result["http_proxy"] == "http://proxy.example.com:3128"
