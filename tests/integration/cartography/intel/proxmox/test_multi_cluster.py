@@ -13,13 +13,16 @@ from unittest.mock import patch
 import cartography.intel.proxmox
 import cartography.intel.proxmox.access
 import cartography.intel.proxmox.backup
+import cartography.intel.proxmox.backup_coverage
 import cartography.intel.proxmox.certificate
 import cartography.intel.proxmox.cluster
 import cartography.intel.proxmox.compute
 import cartography.intel.proxmox.firewall
 import cartography.intel.proxmox.ha
 import cartography.intel.proxmox.pool
+import cartography.intel.proxmox.replication
 import cartography.intel.proxmox.storage
+import cartography.intel.proxmox.storage_content
 from cartography.config import Config
 from tests.integration.util import check_nodes
 from tests.integration.util import check_rels
@@ -47,6 +50,10 @@ SCOPED_IDS = {
     "ProxmoxACL": "/vms/100:root@pam:Administrator",
     "ProxmoxFirewallRule": "cluster:0",
     "ProxmoxCertificate": "pve:pveproxy-ssl.pem",
+    "ProxmoxBackupDefaults": "pve",
+    "ProxmoxBackupArchive": "pve/local:backup/vzdump-qemu-100-2026_01_01-00_00_00.vma.zst",
+    "ProxmoxStorageTemplate": "pve/local:iso/debian.iso",
+    "ProxmoxReplicationJob": "100-0",
 }
 
 
@@ -101,7 +108,31 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
             "get_storage",
             [{"storage": "local", "type": "dir"}] if with_storage else [],
         ),
-        (storage, "get_storage_status", []),
+        (
+            storage,
+            "get_storage_status",
+            [
+                {
+                    "storage": "local",
+                    "content": "images,backup,iso",
+                    "active": 1,
+                    "enabled": 1,
+                    "shared": 0,
+                },
+            ],
+        ),
+        (
+            cartography.intel.proxmox.storage_content,
+            "get_storage_content",
+            [
+                {
+                    "volid": "local:backup/vzdump-qemu-100-2026_01_01-00_00_00.vma.zst",
+                    "content": "backup",
+                    "vmid": 100,
+                },
+                {"volid": "local:iso/debian.iso", "content": "iso"},
+            ],
+        ),
         (cartography.intel.proxmox.pool, "get_pools", [{"poolid": "prod"}]),
         (
             cartography.intel.proxmox.pool,
@@ -112,6 +143,35 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
             cartography.intel.proxmox.backup,
             "get_backup_jobs",
             [{"id": "nightly", "vmid": "100", "storage": "local"}],
+        ),
+        (
+            cartography.intel.proxmox.backup_coverage,
+            "get_included_volumes",
+            {
+                "children": [
+                    {
+                        "id": 100,
+                        "type": "qemu",
+                        "children": [{"id": "scsi0", "included": True}],
+                    },
+                ],
+            },
+        ),
+        (cartography.intel.proxmox.backup_coverage, "get_not_backed_up", []),
+        (
+            cartography.intel.proxmox.backup_coverage,
+            "get_vzdump_defaults",
+            {"storage": "local"},
+        ),
+        (
+            cartography.intel.proxmox.replication,
+            "get_cluster_replication_jobs",
+            [{"id": "100-0", "guest": 100, "target": "pve", "type": "local"}],
+        ),
+        (
+            cartography.intel.proxmox.replication,
+            "get_node_replication_status",
+            [{"id": "100-0", "fail_count": 0}],
         ),
         (cartography.intel.proxmox.ha, "get_ha_groups", [{"group": "ha1"}]),
         (
@@ -231,6 +291,15 @@ def test_two_clusters_with_identical_names_stay_separate(neo4j_session):
         ("ProxmoxPool", "CONTAINS_VM", "ProxmoxVM"),
         ("ProxmoxBackupJob", "BACKS_UP", "ProxmoxVM"),
         ("ProxmoxBackupJob", "BACKS_UP_TO", "ProxmoxStorage"),
+        ("ProxmoxBackupJob", "COVERS", "ProxmoxVM"),
+        ("ProxmoxBackupJob", "INCLUDES_DISK", "ProxmoxDisk"),
+        ("ProxmoxNode", "HAS_BACKUP_DEFAULTS", "ProxmoxBackupDefaults"),
+        ("ProxmoxBackupDefaults", "BACKS_UP_TO", "ProxmoxStorage"),
+        ("ProxmoxBackupArchive", "STORED_ON", "ProxmoxStorage"),
+        ("ProxmoxBackupArchive", "BACKUP_OF", "ProxmoxVM"),
+        ("ProxmoxStorageTemplate", "STORED_ON", "ProxmoxStorage"),
+        ("ProxmoxReplicationJob", "REPLICATES", "ProxmoxVM"),
+        ("ProxmoxReplicationJob", "REPLICATES_TO", "ProxmoxNode"),
         ("ProxmoxHAResource", "MEMBER_OF_HA_GROUP", "ProxmoxHAGroup"),
         ("ProxmoxHAResource", "PROTECTS", "ProxmoxVM"),
         ("ProxmoxUser", "MEMBER_OF_GROUP", "ProxmoxGroup"),

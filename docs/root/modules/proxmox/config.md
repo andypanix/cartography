@@ -23,10 +23,19 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 
 | Privilege | Used for |
 | --- | --- |
-| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall |
-| `VM.Audit` | VM and container configuration, guest firewall rules, backup jobs |
-| `Datastore.Audit` | Storage backends |
+| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall, guests and volumes included in backup jobs, guests not covered by backups, all fields of the node vzdump defaults |
+| `VM.Audit` | VM and container configuration, guest firewall rules, backup jobs, replication jobs and their state |
+| `Datastore.Audit` | Storage backends, storage content (backup archives, ISO images, container templates), storage identity (Proxmox VE 9), node vzdump defaults (on the default backup storage) |
 | `Pool.Audit` | Resource pools |
+
+Cartography does not read `/storage/{storage}`: it requires `Datastore.Allocate`, and `/storage` already returns the storage configuration. The storage identity endpoint exists only on Proxmox VE 9; on Proxmox VE 8.4 Cartography skips it.
+
+The number of API calls grows with the cluster. For N online nodes and J backup jobs:
+
+- Backup coverage makes `J + N + 3` calls.
+- Storage content makes one listing per active shared storage, plus one per node for each active local storage that can hold backups, ISO images, or container templates. Storage that only holds guest disks is not listed.
+- Storage identity makes one call per active shared storage on Proxmox VE 9, and one call in total on Proxmox VE 8.4.
+- Replication makes `N + 2` calls. A per-job status call is only added when a node returns a job without its state.
 
 ## Optional Permissions
 

@@ -18,13 +18,16 @@ from cartography.config import Config
 from cartography.graph.job import GraphJob
 from cartography.intel.proxmox import access
 from cartography.intel.proxmox import backup
+from cartography.intel.proxmox import backup_coverage
 from cartography.intel.proxmox import certificate
 from cartography.intel.proxmox import cluster
 from cartography.intel.proxmox import compute
 from cartography.intel.proxmox import firewall
 from cartography.intel.proxmox import ha
 from cartography.intel.proxmox import pool
+from cartography.intel.proxmox import replication
 from cartography.intel.proxmox import storage
+from cartography.intel.proxmox import storage_content
 from cartography.models.proxmox.access import ProxmoxACLSchema
 from cartography.models.proxmox.access import ProxmoxGroupSchema
 from cartography.models.proxmox.access import ProxmoxRoleSchema
@@ -131,7 +134,7 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     common_job_parameters["CLUSTER_ID"] = cluster_id
 
     # Sync storage before compute so disks can link to their storage
-    storage.sync(
+    storage_status_map = storage.sync(
         neo4j_session,
         proxmox_client,
         cluster_id,
@@ -160,6 +163,31 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
 
     # Sync backup jobs
     backup.sync(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+        common_job_parameters,
+    )
+
+    # Sync backup coverage, storage content and replication after the guests,
+    # disks, storage and backup jobs they link to
+    backup_coverage.sync(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+        common_job_parameters,
+    )
+    storage_content.sync(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+        common_job_parameters,
+        storage_status_map,
+    )
+    replication.sync(
         neo4j_session,
         proxmox_client,
         cluster_id,
@@ -259,6 +287,10 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     GraphJob.from_node_schema(ProxmoxCertificateSchema(), common_job_parameters).run(
         neo4j_session
     )
+
+    backup_coverage.cleanup(neo4j_session, common_job_parameters)
+    storage_content.cleanup(neo4j_session, common_job_parameters)
+    replication.cleanup(neo4j_session, common_job_parameters)
 
     # Note: ProxmoxCluster doesn't need cleanup since it's the tenant root
     # and has no sub_resource_relationship
