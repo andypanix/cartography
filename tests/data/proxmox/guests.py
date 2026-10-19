@@ -138,6 +138,21 @@ MOCK_CONTAINER_INTERFACES = {
             "inet6": "fd00::20/64",
         },
     ],
+    # Proxmox VE 9 shape: both the inet fields and ip-addresses, with the
+    # address family as inet/inet6 and the prefix as a string.
+    201: [
+        {
+            "name": "eth0",
+            "hwaddr": "BC:24:11:00:02:01",
+            "hardware-address": "BC:24:11:00:02:01",
+            "inet": "10.0.0.21/24",
+            "inet6": "fd00::21/64",
+            "ip-addresses": [
+                {"ip-address": "10.0.0.21", "prefix": "24", "ip-address-type": "inet"},
+                {"ip-address": "fd00::21", "prefix": "64", "ip-address-type": "inet6"},
+            ],
+        },
+    ],
 }
 
 # /nodes/{node}/qemu/{vmid}/agent/{command}, as the API wraps them

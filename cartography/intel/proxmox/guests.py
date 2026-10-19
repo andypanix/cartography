@@ -334,6 +334,29 @@ def transform_snapshots(
     return result
 
 
+# Container interfaces name the address family like ip(8); the guest agent
+# names it ipv4 or ipv6.
+_CONTAINER_ADDRESS_TYPES = {"inet": "ipv4", "inet6": "ipv6"}
+
+
+def _normalize_container_address(address: dict[str, Any]) -> dict[str, Any]:
+    """
+    Convert one container interface address to the guest agent address format.
+
+    :param address: Entry of ip-addresses from /nodes/{node}/lxc/{vmid}/interfaces
+    :return: Address with ip-address, an integer prefix and ip-address-type ipv4 or ipv6
+    """
+    ip_type = str(address.get("ip-address-type") or "").lower()
+    prefix = address.get("prefix")
+    if isinstance(prefix, str) and prefix.isdigit():
+        prefix = int(prefix)
+    return {
+        "ip-address": address.get("ip-address"),
+        "prefix": prefix,
+        "ip-address-type": _CONTAINER_ADDRESS_TYPES.get(ip_type, ip_type),
+    }
+
+
 def normalize_container_interfaces(
     interfaces: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -341,15 +364,20 @@ def normalize_container_interfaces(
     Convert container interfaces to the guest agent interface format.
 
     Proxmox VE 9 returns hardware-address and ip-addresses like the guest
-    agent. Older versions return only hwaddr, inet and inet6, which are mapped
-    to the same fields.
+    agent, but with the address type as inet or inet6 and the prefix as a
+    string; both are converted to the guest agent form (ipv4 or ipv6, integer
+    prefix). Older versions return only hwaddr, inet and inet6, which are
+    mapped to the same fields.
 
     :param interfaces: Interface list from /nodes/{node}/lxc/{vmid}/interfaces
     :return: Interfaces with hardware-address, name and ip-addresses
     """
     normalized = []
     for iface in interfaces:
-        addresses = iface.get("ip-addresses")
+        addresses = [
+            _normalize_container_address(address)
+            for address in iface.get("ip-addresses") or []
+        ]
         if not addresses:
             addresses = []
             for key, ip_type in (("inet", "ipv4"), ("inet6", "ipv6")):

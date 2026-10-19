@@ -8,6 +8,7 @@ import pytest
 from proxmoxer.core import ResourceException
 
 from cartography.intel.proxmox import guests
+from cartography.intel.proxmox.compute import enrich_interfaces_with_guest_data
 from tests.data.proxmox.guests import MOCK_AGENT_RESPONSES
 from tests.data.proxmox.guests import MOCK_CLOUDINIT
 from tests.data.proxmox.guests import MOCK_CONTAINER_INTERFACES
@@ -154,12 +155,32 @@ def test_normalize_container_interfaces_from_inet_fields():
     }
 
 
-def test_normalize_container_interfaces_keeps_ip_addresses():
-    addresses = [{"ip-address": "10.0.0.5", "prefix": 24, "ip-address-type": "inet"}]
-    normalized = guests.normalize_container_interfaces(
-        [{"name": "eth0", "hardware-address": "aa", "ip-addresses": addresses}],
+def test_normalize_container_interfaces_converts_pve9_ip_addresses():
+    """Proxmox VE 9 names the family inet/inet6 and returns the prefix as a string."""
+    normalized = guests.normalize_container_interfaces(MOCK_CONTAINER_INTERFACES[201])
+
+    assert normalized[0] == {
+        "name": "eth0",
+        "hardware-address": "BC:24:11:00:02:01",
+        "ip-addresses": [
+            {"ip-address": "10.0.0.21", "prefix": 24, "ip-address-type": "ipv4"},
+            {"ip-address": "fd00::21", "prefix": 64, "ip-address-type": "ipv6"},
+        ],
+    }
+
+
+def test_container_interface_ips_reach_configured_interface():
+    """Normalized container addresses fill the actual IPs of the configured NIC."""
+    interfaces = [{"mac_address": "BC:24:11:00:02:01"}]
+
+    enrich_interfaces_with_guest_data(
+        interfaces,
+        guests.normalize_container_interfaces(MOCK_CONTAINER_INTERFACES[201]),
     )
-    assert normalized[0]["ip-addresses"] == addresses
+
+    assert interfaces[0]["actual_ipv4"] == "10.0.0.21/24"
+    assert interfaces[0]["actual_ipv6"] == "fd00::21/64"
+    assert interfaces[0]["guest_interface_name"] == "eth0"
 
 
 def test_transform_filesystems():
