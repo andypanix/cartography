@@ -27,6 +27,9 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 | `VM.Audit` | VM and container configuration, guest firewall rules, backup jobs |
 | `Datastore.Audit` | Storage backends |
 | `Pool.Audit` | Resource pools |
+| `SDN.Audit` | SDN zones, VNets, subnets, VNet firewall, controllers, IPAM and DNS plugins, and their status on each node; on Proxmox VE 9 also fabrics, prefix lists and route maps. Listing fabric nodes also needs `Sys.Audit` on `/nodes/<node>`. |
+
+Cartography reads only the running SDN configuration, so changes not applied yet in **Datacenter** > **SDN** are not ingested. A cluster without SDN, or a host without the `libpve-network-perl` package, syncs no SDN data. Fabrics, prefix lists, route maps, VNet bridges, fabric status and EVPN VRF tables exist only on Proxmox VE 9 and are skipped on 8.4.
 
 ## Optional Permissions
 

@@ -15,6 +15,7 @@ The module ingests:
 - **Access control**: users, groups, roles, and ACLs, with the resources each ACL applies to.
 - **Firewall**: cluster, node, and guest firewall rules, and cluster IP sets.
 - **Certificates**: TLS certificates installed on each node.
+- **Software-Defined Networking (SDN)**: the running SDN configuration (zones, VNets, subnets, VNet firewall options and rules, controllers, IPAM plugins with the addresses of the built-in IPAM, and DNS plugins) and, per node, the zone and VNet status. On Proxmox VE 9 also fabrics, prefix lists, route maps, the VNet bridges and their ports on each node, and fabric neighbors, interfaces and routes. Guest network interfaces link to the VNet they are attached to.
 
 ```{toctree}
 config

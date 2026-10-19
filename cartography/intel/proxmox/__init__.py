@@ -24,6 +24,7 @@ from cartography.intel.proxmox import compute
 from cartography.intel.proxmox import firewall
 from cartography.intel.proxmox import ha
 from cartography.intel.proxmox import pool
+from cartography.intel.proxmox import sdn
 from cartography.intel.proxmox import storage
 from cartography.models.proxmox.access import ProxmoxACLSchema
 from cartography.models.proxmox.access import ProxmoxGroupSchema
@@ -203,6 +204,16 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
         common_job_parameters,
     )
 
+    # Sync SDN after compute and firewall: VNets link to guest interfaces and
+    # VNet firewall rules reuse the firewall rule model
+    sdn.sync(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+        common_job_parameters,
+    )
+
     # Run cleanup using modern GraphJob approach
     # Per AGENTS.md: Use GraphJob.from_node_schema() instead of JSON cleanup files
     logger.info("Running Proxmox cleanup jobs")
@@ -259,6 +270,8 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     GraphJob.from_node_schema(ProxmoxCertificateSchema(), common_job_parameters).run(
         neo4j_session
     )
+
+    sdn.cleanup(neo4j_session, common_job_parameters)
 
     # Note: ProxmoxCluster doesn't need cleanup since it's the tenant root
     # and has no sub_resource_relationship

@@ -27,11 +27,14 @@ class ProxmoxFirewallRuleNodeProperties(CartographyNodeProperties):
     )
     scope: PropertyRef = PropertyRef(
         "scope",
-        description="Level where the rule is defined: cluster, node, or vm.",
+        description="Level where the rule is defined: cluster, node, vm, or vnet.",
     )
     scope_id: PropertyRef = PropertyRef(
         "scope_id",
-        description="Node name or VM ID for node and VM rules; empty for cluster rules.",
+        description=(
+            "Node name, VM ID, or VNet name for node, VM, and VNet rules; empty "
+            "for cluster rules."
+        ),
     )
     pos: PropertyRef = PropertyRef(
         "pos",
@@ -39,7 +42,7 @@ class ProxmoxFirewallRuleNodeProperties(CartographyNodeProperties):
     )
     type: PropertyRef = PropertyRef(
         "type",
-        description="Rule type: in, out, or group.",
+        description="Rule type: in, out, forward, or group.",
     )
     action: PropertyRef = PropertyRef(
         "action",
@@ -145,8 +148,28 @@ class ProxmoxFirewallRuleToVMRel(CartographyRelSchema):
 
 
 @dataclass(frozen=True)
+class ProxmoxFirewallRuleToVNetRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class ProxmoxFirewallRuleToVNetRel(CartographyRelSchema):
+    """The VNet-level firewall rule applies to the SDN VNet."""
+
+    target_node_label: str = "ProxmoxSDNVNet"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("target_vnet_id")},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "APPLIES_TO_VNET"
+    properties: ProxmoxFirewallRuleToVNetRelProperties = (
+        ProxmoxFirewallRuleToVNetRelProperties()
+    )
+
+
+@dataclass(frozen=True)
 class ProxmoxFirewallRuleSchema(CartographyNodeSchema):
-    """A firewall rule defined at cluster, node, or VM level in a Proxmox VE cluster."""
+    """A firewall rule defined at cluster, node, VM, or SDN VNet level in a Proxmox VE cluster."""
 
     label: str = "ProxmoxFirewallRule"
     properties: ProxmoxFirewallRuleNodeProperties = ProxmoxFirewallRuleNodeProperties()
@@ -154,7 +177,11 @@ class ProxmoxFirewallRuleSchema(CartographyNodeSchema):
         ProxmoxFirewallRuleToClusterRel()
     )
     other_relationships: OtherRelationships = OtherRelationships(
-        [ProxmoxFirewallRuleToNodeRel(), ProxmoxFirewallRuleToVMRel()],
+        [
+            ProxmoxFirewallRuleToNodeRel(),
+            ProxmoxFirewallRuleToVMRel(),
+            ProxmoxFirewallRuleToVNetRel(),
+        ],
     )
 
 
