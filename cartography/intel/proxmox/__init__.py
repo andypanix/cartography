@@ -36,8 +36,10 @@ from cartography.models.proxmox.cluster import ProxmoxNodeSchema
 from cartography.models.proxmox.compute import ProxmoxDiskSchema
 from cartography.models.proxmox.compute import ProxmoxNetworkInterfaceSchema
 from cartography.models.proxmox.compute import ProxmoxVMSchema
+from cartography.models.proxmox.firewall import ProxmoxFirewallAliasSchema
 from cartography.models.proxmox.firewall import ProxmoxFirewallIPSetSchema
 from cartography.models.proxmox.firewall import ProxmoxFirewallRuleSchema
+from cartography.models.proxmox.firewall import ProxmoxFirewallSecurityGroupSchema
 from cartography.models.proxmox.ha import ProxmoxHAGroupSchema
 from cartography.models.proxmox.ha import ProxmoxHAResourceSchema
 from cartography.models.proxmox.pool import ProxmoxPoolSchema
@@ -185,7 +187,7 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
         common_job_parameters,
     )
 
-    # Sync firewall rules and IP sets
+    # Sync firewall options, rules, security groups, aliases, and IP sets
     firewall.sync(
         neo4j_session,
         proxmox_client,
@@ -256,6 +258,12 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     GraphJob.from_node_schema(ProxmoxFirewallIPSetSchema(), common_job_parameters).run(
         neo4j_session
     )
+    GraphJob.from_node_schema(ProxmoxFirewallAliasSchema(), common_job_parameters).run(
+        neo4j_session
+    )
+    GraphJob.from_node_schema(
+        ProxmoxFirewallSecurityGroupSchema(), common_job_parameters
+    ).run(neo4j_session)
     GraphJob.from_node_schema(ProxmoxCertificateSchema(), common_job_parameters).run(
         neo4j_session
     )

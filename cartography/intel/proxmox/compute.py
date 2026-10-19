@@ -454,6 +454,8 @@ def extract_network_data(
                     "vmid": vmid_int,
                     "cluster_id": cluster_id,
                     "vm_id": cluster_scoped_id(cluster_id, vmid),
+                    # Proxmox only filters the interface when firewall=1 is set.
+                    "firewall": False,
                 }
 
                 parts = value.split(",")

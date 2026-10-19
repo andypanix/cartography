@@ -223,6 +223,33 @@ def _run_ingestion(
             return_value=[],
         ),
         patch.object(
+            cartography.intel.proxmox.firewall,
+            "get_cluster_firewall_options",
+            return_value={},
+        ),
+        patch.object(
+            cartography.intel.proxmox.firewall,
+            "get_node_firewall_options",
+            return_value={},
+        ),
+        patch.object(
+            cartography.intel.proxmox.firewall,
+            "get_guest_firewall_options",
+            return_value={},
+        ),
+        patch.object(
+            cartography.intel.proxmox.firewall, "get_security_groups", return_value=[]
+        ),
+        patch.object(
+            cartography.intel.proxmox.firewall, "get_cluster_aliases", return_value=[]
+        ),
+        patch.object(
+            cartography.intel.proxmox.firewall, "get_guest_aliases", return_value=[]
+        ),
+        patch.object(
+            cartography.intel.proxmox.firewall, "get_guest_ipsets", return_value=[]
+        ),
+        patch.object(
             cartography.intel.proxmox.certificate,
             "get_node_certificates",
             return_value=[],
