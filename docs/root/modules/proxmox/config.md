@@ -27,9 +27,14 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 | `VM.Audit` | VM and container configuration, snapshots, cloud-init values, container IP addresses, VM and container firewall (rules, options, aliases, IP sets), backup jobs, replication jobs and their state |
 | `Datastore.Audit` | Storage backends, storage content (backup archives, ISO images, container templates), storage identity (Proxmox VE 9), node vzdump defaults (on the default backup storage) |
 | `Pool.Audit` | Resource pools, including nested pools. Cartography lists only the pools where the user has `Pool.Audit`. |
+| `SDN.Audit` | SDN zones, VNets, subnets, VNet firewall, controllers, IPAM and DNS plugins, and their status on each node; on Proxmox VE 9 also fabrics, prefix lists and route maps. Listing fabric nodes also needs `Sys.Audit` on `/nodes/<node>`. |
 | `Mapping.Audit` | PCI, USB, and directory resource mappings; notification targets, endpoints, and matchers on `/mapping/notifications`; custom CPU models (Proxmox VE 9 only; skipped on Proxmox VE 8.4) |
 
 Ceph muted health checks (`/cluster/ceph/health-mute`) exist only on Proxmox VE 9. On Proxmox VE 8.4 Cartography syncs Ceph without them.
+
+Cartography reads only the running SDN configuration, so changes not applied yet in **Datacenter** > **SDN** are not ingested. A cluster without SDN, or a host without the `libpve-network-perl` package, syncs no SDN data. Fabrics, prefix lists, route maps, VNet bridges, fabric status and EVPN VRF tables exist only on Proxmox VE 9 and are skipped on 8.4.
+
+Cartography reads the SDN state only from online nodes. An offline node loses its SDN deployment links, bridges and fabric state until it is back online. When an online node answers an error for a zone or a fabric, for example an HTTP 500 from FRR, Cartography logs a warning, keeps the last known state of that zone or fabric on that node, and goes on with the other zones, fabrics and nodes. Errors reading the cluster SDN configuration still stop the SDN sync.
 
 Cartography does not read `/storage/{storage}`: it requires `Datastore.Allocate`, and `/storage` already returns the storage configuration. The storage identity endpoint exists only on Proxmox VE 9; on Proxmox VE 8.4 Cartography skips it.
 

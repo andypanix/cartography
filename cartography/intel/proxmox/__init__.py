@@ -31,6 +31,7 @@ from cartography.intel.proxmox import mapping
 from cartography.intel.proxmox import node_details
 from cartography.intel.proxmox import pool
 from cartography.intel.proxmox import replication
+from cartography.intel.proxmox import sdn
 from cartography.intel.proxmox import storage
 from cartography.intel.proxmox import storage_content
 from cartography.models.proxmox.access import ProxmoxACLSchema
@@ -263,6 +264,16 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
         common_job_parameters,
     )
 
+    # Sync SDN after compute and firewall: VNets link to guest interfaces and
+    # VNet firewall rules reuse the firewall rule model
+    sdn.sync(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+        common_job_parameters,
+    )
+
     # Sync SSL/TLS certificates
     certificate.sync(
         neo4j_session,
@@ -394,6 +405,7 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
         ceph.cleanup(neo4j_session, common_job_parameters)
     else:
         logger.warning("Skipping Ceph cleanup: the Ceph data could not be read")
+    sdn.cleanup(neo4j_session, common_job_parameters)
     backup_coverage.cleanup(neo4j_session, common_job_parameters)
     storage_content.cleanup(neo4j_session, common_job_parameters)
     replication.cleanup(neo4j_session, common_job_parameters)

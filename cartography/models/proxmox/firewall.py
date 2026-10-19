@@ -33,16 +33,16 @@ class ProxmoxFirewallRuleNodeProperties(CartographyNodeProperties):
     scope: PropertyRef = PropertyRef(
         "scope",
         description=(
-            "Level where the rule is defined: cluster, node, vm, or group. "
-            "Rules of QEMU VMs and LXC containers both use vm; rules inside a "
-            "security group use group."
+            "Level where the rule is defined: cluster, node, vm, vnet, or "
+            "group. Rules of QEMU VMs and LXC containers both use vm; rules "
+            "inside a security group use group."
         ),
     )
     scope_id: PropertyRef = PropertyRef(
         "scope_id",
         description=(
-            "Node name, VM ID, or security group name for node, VM, and group "
-            "rules; empty for cluster rules."
+            "Node name, VM ID, VNet name, or security group name for node, VM, "
+            "VNet, and group rules; empty for cluster rules."
         ),
     )
     pos: PropertyRef = PropertyRef(
@@ -165,6 +165,26 @@ class ProxmoxFirewallRuleToVMRel(CartographyRelSchema):
 
 
 @dataclass(frozen=True)
+class ProxmoxFirewallRuleToVNetRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class ProxmoxFirewallRuleToVNetRel(CartographyRelSchema):
+    """The VNet-level firewall rule applies to the SDN VNet."""
+
+    target_node_label: str = "ProxmoxSDNVNet"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("target_vnet_id")},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "APPLIES_TO_VNET"
+    properties: ProxmoxFirewallRuleToVNetRelProperties = (
+        ProxmoxFirewallRuleToVNetRelProperties()
+    )
+
+
+@dataclass(frozen=True)
 class ProxmoxFirewallRuleToSecurityGroupRelProperties(CartographyRelProperties):
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
@@ -266,7 +286,7 @@ class ProxmoxFirewallRuleDestAliasRel(CartographyRelSchema):
 
 @dataclass(frozen=True)
 class ProxmoxFirewallRuleSchema(CartographyNodeSchema):
-    """A firewall rule defined at cluster, node, VM, or security group level in a Proxmox VE cluster."""
+    """A firewall rule defined at cluster, node, VM, SDN VNet, or security group level in a Proxmox VE cluster."""
 
     label: str = "ProxmoxFirewallRule"
     properties: ProxmoxFirewallRuleNodeProperties = ProxmoxFirewallRuleNodeProperties()
@@ -277,6 +297,7 @@ class ProxmoxFirewallRuleSchema(CartographyNodeSchema):
         [
             ProxmoxFirewallRuleToNodeRel(),
             ProxmoxFirewallRuleToVMRel(),
+            ProxmoxFirewallRuleToVNetRel(),
             ProxmoxFirewallRuleInSecurityGroupRel(),
             ProxmoxFirewallRuleUsesSecurityGroupRel(),
             ProxmoxFirewallRuleSourceIPSetRel(),

@@ -355,8 +355,9 @@ def transform_firewall_rule_data(
 
     :param rules: Raw firewall rule data from API
     :param cluster_id: Parent cluster ID
-    :param scope: Rule scope (cluster, node, vm, group)
-    :param scope_id: Scope identifier (node name, vmid, or security group name)
+    :param scope: Rule scope (cluster, node, vm, vnet, group)
+    :param scope_id: Scope identifier (node name, vmid, VNet name, or security
+        group name)
     :return: List of transformed firewall rule dicts
     """
     transformed_rules = []
@@ -399,6 +400,11 @@ def transform_firewall_rule_data(
                 "target_vmid": (
                     int(scope_id)
                     if scope == "vm" and scope_id and scope_id.isdigit()
+                    else None
+                ),
+                "target_vnet_id": (
+                    cluster_scoped_id(cluster_id, scope_id)
+                    if scope == "vnet" and scope_id
                     else None
                 ),
                 "security_group_id": (
