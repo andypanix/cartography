@@ -46,6 +46,9 @@ SCOPED_IDS = {
     "ProxmoxRole": "Administrator",
     "ProxmoxACL": "/vms/100:root@pam:Administrator",
     "ProxmoxFirewallRule": "vm:100:0",
+    "ProxmoxFirewallIPSet": "vm:100:trusted",
+    "ProxmoxFirewallAlias": "vm:100:backend",
+    "ProxmoxFirewallSecurityGroup": "group:web",
     "ProxmoxCertificate": "pve:pveproxy-ssl.pem",
 }
 
@@ -143,16 +146,36 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
             [{"path": "/vms/100", "roleid": "Administrator", "ugid": "root@pam"}],
         ),
         # The only rule is a guest rule, so the APPLIES_TO_VM matcher (vmid and
-        # cluster_id) is checked across clusters that share vmid 100.
+        # cluster_id) is checked across clusters that share vmid 100. Its
+        # source and dest name the guest IP set and alias, which both clusters
+        # define with the same names.
         (firewall, "get_cluster_firewall_rules", []),
         (firewall, "get_cluster_ipsets", []),
         (firewall, "get_node_firewall_rules", []),
         (
             firewall,
             "get_vm_firewall_rules",
-            [{"pos": 0, "type": "in", "action": "ACCEPT", "dport": "22"}],
+            [
+                {
+                    "pos": 0,
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "dport": "22",
+                    "source": "+trusted",
+                    "dest": "backend",
+                },
+            ],
         ),
         (firewall, "get_container_firewall_rules", []),
+        (firewall, "get_cluster_firewall_options", {"enable": 1}),
+        (firewall, "get_node_firewall_options", {}),
+        (firewall, "get_guest_firewall_options", {"enable": 1}),
+        (firewall, "get_security_groups", [{"group": "web"}]),
+        (firewall, "get_security_group_rules", []),
+        (firewall, "get_cluster_aliases", []),
+        (firewall, "get_guest_aliases", [{"name": "backend", "cidr": "10.0.0.5"}]),
+        (firewall, "get_guest_ipsets", [{"name": "trusted"}]),
+        (firewall, "get_guest_ipset_cidrs", [{"cidr": "10.0.0.0/8"}]),
         (
             cartography.intel.proxmox.certificate,
             "get_node_certificates",
@@ -253,6 +276,10 @@ def test_two_clusters_with_identical_names_stay_separate(neo4j_session):
         ("ProxmoxACL", "GRANTS_ACCESS_TO", "ProxmoxVM"),
         ("ProxmoxUser", "HAS_PERMISSION", "ProxmoxVM"),
         ("ProxmoxFirewallRule", "APPLIES_TO_VM", "ProxmoxVM"),
+        ("ProxmoxFirewallRule", "HAS_SOURCE", "ProxmoxFirewallIPSet"),
+        ("ProxmoxFirewallRule", "HAS_DESTINATION", "ProxmoxFirewallAlias"),
+        ("ProxmoxVM", "HAS_FIREWALL_IPSET", "ProxmoxFirewallIPSet"),
+        ("ProxmoxVM", "HAS_FIREWALL_ALIAS", "ProxmoxFirewallAlias"),
     )
     for source, rel, target in cluster_edges:
         assert check_rels(
