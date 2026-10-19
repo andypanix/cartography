@@ -24,9 +24,10 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 | Privilege | Used for |
 | --- | --- |
 | `Sys.Audit` | Cluster status and options, Corosync configuration and QDevice status, nodes, node networks, certificates, users, API tokens, second factors, realms, realm sync jobs, groups, roles, ACLs, HA groups, resources, rules and status, cluster and node firewall (rules, options, security groups, aliases, IP sets) |
-| `VM.Audit` | VM and container configuration, VM and container firewall (rules, options, aliases, IP sets), backup jobs |
+| `VM.Audit` | VM and container configuration, snapshots, cloud-init values, container IP addresses, VM and container firewall (rules, options, aliases, IP sets), backup jobs |
 | `Datastore.Audit` | Storage backends |
 | `Pool.Audit` | Resource pools, including nested pools. Cartography lists only the pools where the user has `Pool.Audit`. |
+| `Mapping.Audit` | Custom CPU models (Proxmox VE 9 only; skipped on Proxmox VE 8.4) |
 
 ### Access control endpoints
 
@@ -53,7 +54,7 @@ Cartography never reads secrets: the API returns no token secrets, TOTP secrets 
 - Proxmox VE 9: `VM.GuestAgent.Audit`, which `PVEAuditor` includes.
 - Proxmox VE 8.4: `VM.Monitor`, which `PVEAuditor` does not include. Grant it through a custom role that contains `VM.Monitor`.
 
-Without it, Cartography logs the failure and syncs the VMs without guest agent data.
+Without it, Cartography logs the failure and syncs the VMs without guest agent data. The same privilege covers the filesystem, logged-in user and time zone commands; a command that the agent does not support or blocks is skipped for that VM.
 
 ## Configure Cartography
 
@@ -66,7 +67,7 @@ Without it, Cartography logs the failure and syncs the VMs without guest agent d
 | `--proxmox-token-value-env-var` | Name of the environment variable that holds the API token secret. |
 | `--proxmox-password-env-var` | Name of the environment variable that holds the user password. Used only when no API token is configured. |
 | `--proxmox-verify-ssl` / `--no-proxmox-verify-ssl` | Verify the TLS certificate of the API. Default: enabled. |
-| `--proxmox-enable-guest-agent` | Collect OS and network details from the QEMU guest agent. Increases sync time. Default: disabled. |
+| `--proxmox-enable-guest-agent` | Collect OS, network, filesystem, logged-in user and time zone details from the QEMU guest agent. Increases sync time. Default: disabled. |
 | `--proxmox-request-timeout` | Timeout in seconds for each API request. Default: `60`. |
 
 ## Run Cartography
@@ -82,6 +83,8 @@ cartography \
 ```
 
 ## Advanced Configuration
+
+Each guest costs one configuration and one snapshot request, plus one cloud-init request for a VM with a cloud-init drive and one interface request for a running container. With `--proxmox-enable-guest-agent`, a running VM costs six more guest agent requests, three of them only when the agent answers the first three.
 
 Cartography tries an API request up to three times, with exponential backoff, when it times out, cannot connect, or gets a 429, 502, 503 or 504 response. Other errors stop the Proxmox sync.
 

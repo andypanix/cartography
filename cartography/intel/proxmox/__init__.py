@@ -22,6 +22,7 @@ from cartography.intel.proxmox import certificate
 from cartography.intel.proxmox import cluster
 from cartography.intel.proxmox import compute
 from cartography.intel.proxmox import firewall
+from cartography.intel.proxmox import guests
 from cartography.intel.proxmox import ha
 from cartography.intel.proxmox import pool
 from cartography.intel.proxmox import storage
@@ -44,6 +45,9 @@ from cartography.models.proxmox.firewall import ProxmoxFirewallAliasSchema
 from cartography.models.proxmox.firewall import ProxmoxFirewallIPSetSchema
 from cartography.models.proxmox.firewall import ProxmoxFirewallRuleSchema
 from cartography.models.proxmox.firewall import ProxmoxFirewallSecurityGroupSchema
+from cartography.models.proxmox.guests import ProxmoxCustomCPUModelSchema
+from cartography.models.proxmox.guests import ProxmoxGuestFilesystemSchema
+from cartography.models.proxmox.guests import ProxmoxSnapshotSchema
 from cartography.models.proxmox.ha import ProxmoxHAGroupSchema
 from cartography.models.proxmox.ha import ProxmoxHALRMSchema
 from cartography.models.proxmox.ha import ProxmoxHAManagerSchema
@@ -148,7 +152,15 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
         common_job_parameters,
     )
 
-    # Sync VMs and containers
+    # Sync custom CPU models before compute so VMs can link to them
+    guests.sync_custom_cpu_models(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+    )
+
+    # Sync VMs and containers, with their snapshots and guest details
     compute.sync(
         neo4j_session,
         proxmox_client,
@@ -232,6 +244,14 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     GraphJob.from_node_schema(
         ProxmoxNetworkInterfaceSchema(), common_job_parameters
     ).run(neo4j_session)
+    for guest_schema in (
+        ProxmoxSnapshotSchema(),
+        ProxmoxGuestFilesystemSchema(),
+        ProxmoxCustomCPUModelSchema(),
+    ):
+        GraphJob.from_node_schema(guest_schema, common_job_parameters).run(
+            neo4j_session
+        )
     GraphJob.from_node_schema(ProxmoxStorageSchema(), common_job_parameters).run(
         neo4j_session
     )

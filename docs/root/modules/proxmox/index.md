@@ -8,6 +8,7 @@ The module ingests:
 
 - **Cluster topology**: cluster settings, nodes, and node network interfaces. On a cluster, also the Corosync totem settings, the QDevice status, and each node's Corosync ID, votes, and link addresses. A standalone host has no Corosync configuration, so these properties stay empty.
 - **Compute**: QEMU virtual machines and LXC containers, with their disks and network interfaces. Guest agent data (OS, hostname, guest IP addresses) is optional.
+- **Guest details**: snapshots and their parent chain, HA state and pool, the running QEMU machine and version, cloud-init values, IP addresses of running containers, and custom CPU models (Proxmox VE 9). Cloud-init passwords are never stored: Cartography records only whether one is set, and stores public SSH keys as a count and SHA256 fingerprints. With the guest agent enabled, it also reads the mounted filesystems, logged-in users and time zone of running VMs.
 - **Storage**: storage backends and the nodes where they are available.
 - **Resource pools**: pools, nested pools, and the VMs and storage they contain.
 - **Backup jobs**: scheduled vzdump jobs, their target storage, and the guests they back up.
