@@ -14,8 +14,10 @@ _PROXMOX_ACL_RESOURCE_LABELS = (
 
 
 def _user_permission_statement(resource_label: str) -> AnalysisStatement:
-    # Zero hops: the ACL names the user (or one of its API tokens) directly.
+    # Zero hops: the ACL names the user directly.
     # One hop: the ACL names a group the user is a member of.
+    # ACLs on API tokens link to ProxmoxAPIToken through APPLIES_TO_TOKEN, not
+    # to the user: a token's grants never widen what its user can reach.
     return AnalysisStatement(
         comment=f"Users reach {resource_label} through their own ACLs or their groups' ACLs.",
         match=f"""

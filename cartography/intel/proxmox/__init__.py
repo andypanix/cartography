@@ -26,8 +26,12 @@ from cartography.intel.proxmox import ha
 from cartography.intel.proxmox import pool
 from cartography.intel.proxmox import storage
 from cartography.models.proxmox.access import ProxmoxACLSchema
+from cartography.models.proxmox.access import ProxmoxAPITokenSchema
 from cartography.models.proxmox.access import ProxmoxGroupSchema
+from cartography.models.proxmox.access import ProxmoxRealmSchema
+from cartography.models.proxmox.access import ProxmoxRealmSyncJobSchema
 from cartography.models.proxmox.access import ProxmoxRoleSchema
+from cartography.models.proxmox.access import ProxmoxTFAFactorSchema
 from cartography.models.proxmox.access import ProxmoxUserSchema
 from cartography.models.proxmox.backup import ProxmoxBackupJobSchema
 from cartography.models.proxmox.certificate import ProxmoxCertificateSchema
@@ -181,7 +185,7 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
         common_job_parameters,
     )
 
-    # Sync access control (users, groups, roles, ACLs)
+    # Sync access control (realms, users, tokens, TFA, groups, roles, ACLs)
     access.sync(
         neo4j_session,
         proxmox_client,
@@ -264,6 +268,15 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     GraphJob.from_node_schema(ProxmoxACLSchema(), common_job_parameters).run(
         neo4j_session
     )
+    for access_schema in (
+        ProxmoxAPITokenSchema(),
+        ProxmoxTFAFactorSchema(),
+        ProxmoxRealmSyncJobSchema(),
+        ProxmoxRealmSchema(),
+    ):
+        GraphJob.from_node_schema(access_schema, common_job_parameters).run(
+            neo4j_session
+        )
     GraphJob.from_node_schema(ProxmoxFirewallRuleSchema(), common_job_parameters).run(
         neo4j_session
     )

@@ -12,7 +12,7 @@ The module ingests:
 - **Resource pools**: pools, nested pools, and the VMs and storage they contain.
 - **Backup jobs**: scheduled vzdump jobs, their target storage, and the guests they back up.
 - **High availability**: HA-managed resources, HA rules (Proxmox VE 9) and HA groups (Proxmox VE 8.4, or 9 before the groups are migrated to rules), the HA manager with its CRM master node, quorum and fencing state, and the local resource manager (LRM) of each node.
-- **Access control**: users, groups, roles, and ACLs, with the resources each ACL applies to.
+- **Access control**: users, API tokens, second factors, authentication realms, realm sync jobs, groups, roles, and ACLs, with the resources each ACL applies to. ACL entries for an API token link to the token, not to its user; each token stores `privsep`, which tells whether it is limited to its own ACLs or has all permissions of its user. The derived `HAS_PERMISSION` edges cover users and groups only, not API tokens. Users carry a TFA summary (`tfa_enabled`, `tfa_types`, `totp_locked`, `tfa_locked_until`).
 - **Firewall**: firewall rules of the cluster, nodes, QEMU VMs, LXC containers, and security groups; cluster and guest IP sets and aliases; and the firewall options of the cluster, each node, and each guest. Rules link to the security group they include and to the IP sets and aliases their source and destination name, when the name resolves to a synced IP set or alias.
 - **Certificates**: TLS certificates installed on each node.
 
