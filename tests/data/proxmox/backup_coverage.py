@@ -8,7 +8,8 @@ MOCK_COVERAGE_BACKUP_JOBS = [
     {"id": "backup-web", "vmid": "100", "storage": "local", "enabled": 1},
 ]
 
-# /cluster/backup/{id}/included_volumes, keyed by job ID
+# /cluster/backup/{id}/included_volumes, keyed by job ID. Volume IDs come back
+# as "<vmid>:<config key>" and included as 0/1; backup-web keeps a bare key.
 MOCK_INCLUDED_VOLUMES = {
     "backup-all": {
         "children": [
@@ -18,15 +19,15 @@ MOCK_INCLUDED_VOLUMES = {
                 "type": "qemu",
                 "children": [
                     {
-                        "id": "scsi0",
+                        "id": "100:scsi0",
                         "name": "local-lvm:vm-100-disk-0",
-                        "included": True,
+                        "included": 1,
                         "reason": "default backup",
                     },
                     {
-                        "id": "scsi1",
+                        "id": "100:scsi1",
                         "name": "local-lvm:vm-100-disk-1",
-                        "included": False,
+                        "included": 0,
                         "reason": "disabled",
                     },
                 ],
@@ -37,9 +38,9 @@ MOCK_INCLUDED_VOLUMES = {
                 "type": "lxc",
                 "children": [
                     {
-                        "id": "rootfs",
+                        "id": "200:rootfs",
                         "name": "local-lvm:vm-200-disk-0",
-                        "included": True,
+                        "included": 1,
                         "reason": "rootfs",
                     },
                 ],
@@ -87,8 +88,9 @@ MOCK_VZDUMP_DEFAULTS = {
         "prune-backups": "keep-daily=7,keep-last=3",
         "exclude-path": ["/tmp/?*", "/var/tmp/?*"],
         "stdexcludes": 1,
-        "fleecing": "enabled=1,storage=local-lvm",
-        "performance": "max-workers=16",
+        # The API returns the fleecing and performance property strings parsed.
+        "fleecing": {"enabled": 1, "storage": "local-lvm"},
+        "performance": {"max-workers": 16, "pbs-entries-max": 1048576},
         "pbs-change-detection-mode": "metadata",
         "lockwait": 180,
         "stopwait": 10,
@@ -96,5 +98,6 @@ MOCK_VZDUMP_DEFAULTS = {
     "node2": {
         "mode": "stop",
         "prune-backups": {"keep-all": "1"},
+        "fleecing": "0",
     },
 }

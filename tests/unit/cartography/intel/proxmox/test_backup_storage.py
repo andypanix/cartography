@@ -5,6 +5,7 @@ Unit tests for Proxmox backup coverage, storage content, and replication transfo
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import pytest
 from proxmoxer.core import ResourceException
 
 import cartography.intel.proxmox.replication as replication
@@ -86,11 +87,20 @@ def test_transform_vzdump_defaults_parses_prune_settings_and_flags():
     assert node1["remove"] is True
     assert node1["exclude_path"] == ["/tmp/?*", "/var/tmp/?*"]
     assert node1["notes_template"] == "{{guestname}}"
+    assert node1["fleecing_enabled"] is True
+    assert node1["fleecing_storage"] == "local-lvm"
+    assert node1["performance_max_workers"] == 16
+    assert node1["performance_pbs_entries_max"] == 1048576
+    for value in node1.values():
+        assert not isinstance(value, dict)
 
     node2 = by_node["node2"]
     assert node2["storage_id"] is None
     assert node2["prune_keep_all"] is True
     assert node2["protected"] is None
+    assert node2["fleecing_enabled"] is False
+    assert node2["fleecing_storage"] is None
+    assert node2["performance_max_workers"] is None
 
 
 def test_plan_content_reads_lists_shared_storage_once_and_skips_guest_only_storage():
@@ -261,3 +271,44 @@ def test_shared_storage_identity_reads_active_shared_storage_only():
     }
     client.nodes.assert_called_once_with("node1")
     client.nodes.return_value.storage.assert_called_once_with("pbs")
+
+
+def test_shared_storage_identity_skips_plugins_without_identity():
+    """A storage plugin without identity answers 500; the other storages are still read."""
+    client = MagicMock()
+    client.nodes.return_value.storage.return_value.identity.get.side_effect = [
+        ResourceException(
+            500,
+            "Internal Server Error",
+            "get_identity not implemented for this plugin at "
+            "/usr/share/perl5/PVE/Storage/Plugin.pm line 2687.",
+        ),
+        {"id": "pbs-store-id", "type": "pbs"},
+    ]
+    storage_list = [
+        {"storage": "nfs-share", "shared": 1},
+        {"storage": "pbs", "shared": 1},
+    ]
+    status_map = {
+        "node1": [
+            {"storage": "nfs-share", "active": 1},
+            {"storage": "pbs", "active": 1},
+        ],
+    }
+
+    assert storage.get_shared_storage_identities(client, storage_list, status_map) == {
+        "pbs": "pbs-store-id",
+    }
+
+
+def test_shared_storage_identity_raises_other_server_errors():
+    """A 500 with another message is not a missing feature and stops the sync."""
+    client = MagicMock()
+    client.nodes.return_value.storage.return_value.identity.get.side_effect = (
+        ResourceException(500, "Internal Server Error", "storage is not online")
+    )
+    storage_list = [{"storage": "pbs", "shared": 1}]
+    status_map = {"node1": [{"storage": "pbs", "active": 1}]}
+
+    with pytest.raises(ResourceException):
+        storage.get_shared_storage_identities(client, storage_list, status_map)

@@ -97,13 +97,21 @@ class ProxmoxBackupDefaultsNodeProperties(CartographyNodeProperties):
         "stdexcludes",
         description="Whether temporary files and logs are excluded.",
     )
-    fleecing: PropertyRef = PropertyRef(
-        "fleecing",
-        description="Backup fleecing options for VMs, as a property string.",
+    fleecing_enabled: PropertyRef = PropertyRef(
+        "fleecing_enabled",
+        description="Whether backup fleecing is enabled for VMs (enabled key of the fleecing option).",
     )
-    performance: PropertyRef = PropertyRef(
-        "performance",
-        description="Performance-related backup settings, as a property string.",
+    fleecing_storage: PropertyRef = PropertyRef(
+        "fleecing_storage",
+        description="Storage that holds the fleecing images (storage key of the fleecing option).",
+    )
+    performance_max_workers: PropertyRef = PropertyRef(
+        "performance_max_workers",
+        description="Maximum number of parallel IO workers for VM backups (max-workers key of the performance option).",
+    )
+    performance_pbs_entries_max: PropertyRef = PropertyRef(
+        "performance_pbs_entries_max",
+        description="Maximum number of entries a container backup to Proxmox Backup Server keeps in memory (pbs-entries-max key of the performance option).",
     )
     pbs_change_detection_mode: PropertyRef = PropertyRef(
         "pbs_change_detection_mode",

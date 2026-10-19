@@ -10,6 +10,7 @@ from typing import Dict
 from typing import List
 
 import neo4j
+from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
 from cartography.intel.proxmox.util import cluster_scoped_id
@@ -19,6 +20,24 @@ from cartography.models.proxmox.storage import ProxmoxStorageSchema
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
+
+# Proxmox VE 9 answers HTTP 500 with this message for storage types whose
+# plugin has no identity, such as NFS, CIFS or directory storage.
+STORAGE_IDENTITY_NOT_IMPLEMENTED_MESSAGE = "get_identity not implemented"
+
+
+def is_storage_identity_not_implemented_error(exc: Exception) -> bool:
+    """
+    Check if a storage identity error means the storage plugin has no identity.
+
+    :param exc: The exception raised by the Proxmox API client
+    :return: True for the HTTP 500 that storage plugins without identity return
+    """
+    return (
+        isinstance(exc, ResourceException)
+        and exc.status_code == 500
+        and STORAGE_IDENTITY_NOT_IMPLEMENTED_MESSAGE in str(exc)
+    )
 
 
 # ============================================================================
@@ -80,9 +99,9 @@ def get_shared_storage_identities(
     """
     Read the identity of each active shared storage from one node.
 
-    Storage local to a node has one identity per node and is skipped. The
-    reads stop at the first host that does not have the endpoint, such as
-    Proxmox VE 8.
+    Storage local to a node has one identity per node and is skipped, and so
+    is storage whose plugin does not implement an identity. The reads stop at
+    the first host that does not have the endpoint, such as Proxmox VE 8.
 
     :param proxmox_client: Proxmox API client
     :param storage_list: Raw storage definitions from API
@@ -107,7 +126,16 @@ def get_shared_storage_identities(
         )
         if node_name is None:
             continue
-        identity = get_storage_identity(proxmox_client, node_name, storage_name)
+        try:
+            identity = get_storage_identity(proxmox_client, node_name, storage_name)
+        except ResourceException as e:
+            if not is_storage_identity_not_implemented_error(e):
+                raise
+            logger.info(
+                "Storage %s has no identity on this storage type, skipping",
+                storage_name,
+            )
+            continue
         if identity is None:
             break
         if identity.get("id"):

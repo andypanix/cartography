@@ -108,11 +108,17 @@ def transform_included_volumes(
         for volume in guest.get("children") or []:
             if not volume.get("included"):
                 continue
+            # The API returns the volume ID as "<vmid>:<config key>", such
+            # as "100:scsi0"; the disk ID is the config key.
+            disk_id = str(volume["id"])
+            vmid_prefix = f"{vmid}:"
+            if disk_id.startswith(vmid_prefix):
+                disk_id = disk_id[len(vmid_prefix) :]
             disk_links.append(
                 {
                     "job_id": graph_job_id,
                     "vmid": vmid,
-                    "disk_id": volume["id"],
+                    "disk_id": disk_id,
                     "cluster_id": cluster_id,
                 },
             )
@@ -137,17 +143,24 @@ def transform_backup_coverage(
     ]
 
 
-def _parse_prune_backups(value: Any) -> dict[str, Any]:
+def _parse_property_string(
+    value: Any, default_key: str | None = None
+) -> dict[str, Any]:
     """
-    Parse prune-backups, returned as a map or as a property string such as
-    "keep-last=3,keep-weekly=2".
+    Parse a vzdump property-string option, returned as a map or as a string
+    such as "keep-last=3,keep-weekly=2". A bare value without "=" belongs to
+    default_key. Integer values are converted to int.
     """
     if isinstance(value, dict):
         raw = value
     elif isinstance(value, str):
-        raw = dict(
-            part.split("=", 1) for part in value.split(",") if "=" in part.strip()
-        )
+        raw = {}
+        for part in value.split(","):
+            key, sep, item = part.partition("=")
+            if sep:
+                raw[key] = item
+            elif default_key and key.strip():
+                raw[default_key] = key
     else:
         return {}
     parsed: dict[str, Any] = {}
@@ -158,6 +171,14 @@ def _parse_prune_backups(value: Any) -> dict[str, Any]:
         else:
             parsed[key] = item
     return parsed
+
+
+def _parse_prune_backups(value: Any) -> dict[str, Any]:
+    """
+    Parse prune-backups, returned as a map or as a property string such as
+    "keep-last=3,keep-weekly=2".
+    """
+    return _parse_property_string(value)
 
 
 def _bool(value: Any) -> bool | None:
@@ -180,6 +201,11 @@ def transform_vzdump_defaults(
     transformed = []
     for node_name, defaults in defaults_by_node.items():
         prune = _parse_prune_backups(defaults.get("prune-backups"))
+        fleecing = _parse_property_string(
+            defaults.get("fleecing"),
+            default_key="enabled",
+        )
+        performance = _parse_property_string(defaults.get("performance"))
         storage = defaults.get("storage")
         exclude_path = defaults.get("exclude-path")
         if isinstance(exclude_path, str):
@@ -209,8 +235,10 @@ def transform_vzdump_defaults(
                 "dumpdir": defaults.get("dumpdir"),
                 "exclude_path": exclude_path,
                 "stdexcludes": _bool(defaults.get("stdexcludes")),
-                "fleecing": defaults.get("fleecing"),
-                "performance": defaults.get("performance"),
+                "fleecing_enabled": _bool(fleecing.get("enabled")),
+                "fleecing_storage": fleecing.get("storage"),
+                "performance_max_workers": performance.get("max-workers"),
+                "performance_pbs_entries_max": performance.get("pbs-entries-max"),
                 "pbs_change_detection_mode": defaults.get("pbs-change-detection-mode"),
                 "zstd": defaults.get("zstd"),
                 "pigz": defaults.get("pigz"),
