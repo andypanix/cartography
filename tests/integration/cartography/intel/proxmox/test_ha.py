@@ -5,9 +5,15 @@ Integration tests for Proxmox HA sync.
 from typing import Any
 from unittest.mock import patch
 
+from proxmoxer.core import ResourceException
+
 import cartography.intel.proxmox.ha
 from tests.data.proxmox.ha import MOCK_HA_GROUP_DATA
+from tests.data.proxmox.ha import MOCK_HA_MANAGER_STATUS_DATA
 from tests.data.proxmox.ha import MOCK_HA_RESOURCE_DATA
+from tests.data.proxmox.ha import MOCK_HA_RESOURCE_DATA_PVE9
+from tests.data.proxmox.ha import MOCK_HA_RULE_DATA
+from tests.data.proxmox.ha import MOCK_HA_STATUS_DATA
 from tests.integration.util import check_nodes
 from tests.integration.util import check_rels
 
@@ -15,15 +21,25 @@ TEST_UPDATE_TAG = 123456789
 TEST_CLUSTER_ID = "test-cluster"
 
 
+@patch.object(cartography.intel.proxmox.ha, "get_ha_manager_status", return_value={})
+@patch.object(cartography.intel.proxmox.ha, "get_ha_status", return_value=[])
+@patch.object(cartography.intel.proxmox.ha, "get_ha_rules", return_value=[])
 @patch.object(
     cartography.intel.proxmox.ha, "get_ha_groups", return_value=MOCK_HA_GROUP_DATA
 )
 @patch.object(
     cartography.intel.proxmox.ha, "get_ha_resources", return_value=MOCK_HA_RESOURCE_DATA
 )
-def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
+def test_sync_ha(
+    mock_get_resources,
+    mock_get_groups,
+    mock_get_rules,
+    mock_get_status,
+    mock_get_manager_status,
+    neo4j_session,
+):
     """
-    Test that HA groups and resources sync correctly.
+    Test that HA groups and resources of Proxmox VE 8.4 sync correctly.
     """
     # Arrange
     common_job_parameters: dict[str, Any] = {
@@ -169,3 +185,201 @@ def test_sync_ha(mock_get_resources, mock_get_groups, neo4j_session):
     record = result.single()
     assert record["restricted"] == 1  # Proxmox API returns 1 for true
     assert record["nofailback"] == 1  # Proxmox API returns 1 for true
+
+
+@patch.object(
+    cartography.intel.proxmox.ha,
+    "get_ha_manager_status",
+    return_value=MOCK_HA_MANAGER_STATUS_DATA,
+)
+@patch.object(
+    cartography.intel.proxmox.ha, "get_ha_status", return_value=MOCK_HA_STATUS_DATA
+)
+@patch.object(
+    cartography.intel.proxmox.ha, "get_ha_rules", return_value=MOCK_HA_RULE_DATA
+)
+@patch.object(
+    cartography.intel.proxmox.ha,
+    "get_ha_groups",
+    side_effect=ResourceException(
+        500,
+        "cannot index groups: ha groups have been migrated to rules",
+        "",
+    ),
+)
+@patch.object(
+    cartography.intel.proxmox.ha,
+    "get_ha_resources",
+    return_value=MOCK_HA_RESOURCE_DATA_PVE9,
+)
+def test_sync_ha_pve9_rules_and_status(
+    mock_get_resources,
+    mock_get_groups,
+    mock_get_rules,
+    mock_get_status,
+    mock_get_manager_status,
+    neo4j_session,
+):
+    """
+    On Proxmox VE 9 with HA groups migrated to rules, the sync skips groups and
+    loads HA rules, the HA manager, and one LRM per node.
+    """
+    # Arrange
+    neo4j_session.run("MATCH (n) DETACH DELETE n")
+    common_job_parameters: dict[str, Any] = {
+        "UPDATE_TAG": TEST_UPDATE_TAG,
+        "CLUSTER_ID": TEST_CLUSTER_ID,
+    }
+    neo4j_session.run(
+        """
+        MERGE (c:ProxmoxCluster {id: $cluster_id})
+        SET c.lastupdated = $update_tag
+        WITH c
+        UNWIND ['node1', 'node2'] AS name
+        MERGE (n:ProxmoxNode {id: $cluster_id + '/' + name})
+        SET n.name = name, n.cluster_id = $cluster_id, n.lastupdated = $update_tag
+        """,
+        cluster_id=TEST_CLUSTER_ID,
+        update_tag=TEST_UPDATE_TAG,
+    )
+
+    # Act
+    cartography.intel.proxmox.ha.sync(
+        neo4j_session,
+        None,  # proxmox_client mocked
+        TEST_CLUSTER_ID,
+        TEST_UPDATE_TAG,
+        common_job_parameters,
+    )
+
+    # Assert - no HA groups, resources carry failback
+    assert check_nodes(neo4j_session, "ProxmoxHAGroup", ["id"]) == set()
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxHAResource",
+        ["id", "type", "failback", "auto_rebalance"],
+    ) == {
+        ("test-cluster/vm:100", "vm", True, None),
+        ("test-cluster/ct:200", "ct", False, False),
+        ("test-cluster/vm:101", "vm", None, None),
+    }
+
+    # Assert - HA rules
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxHARule",
+        ["id", "type", "affinity", "strict", "disable", "nodes"],
+    ) == {
+        (
+            "test-cluster/ha-group-1",
+            "node-affinity",
+            "positive",
+            False,
+            False,
+            "node1:2,node2",
+        ),
+        (
+            "test-cluster/keep-apart",
+            "resource-affinity",
+            "negative",
+            None,
+            True,
+            None,
+        ),
+    }
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxCluster",
+        "id",
+        "ProxmoxHARule",
+        "id",
+        "RESOURCE",
+    ) == {
+        (TEST_CLUSTER_ID, "test-cluster/ha-group-1"),
+        (TEST_CLUSTER_ID, "test-cluster/keep-apart"),
+    }
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxHARule",
+        "id",
+        "ProxmoxHAResource",
+        "id",
+        "APPLIES_TO_HA_RESOURCE",
+    ) == {
+        ("test-cluster/ha-group-1", "test-cluster/vm:100"),
+        ("test-cluster/ha-group-1", "test-cluster/ct:200"),
+        ("test-cluster/keep-apart", "test-cluster/vm:100"),
+        ("test-cluster/keep-apart", "test-cluster/vm:101"),
+    }
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxHARule",
+        "id",
+        "ProxmoxNode",
+        "id",
+        "APPLIES_TO_NODE",
+    ) == {
+        ("test-cluster/ha-group-1", "test-cluster/node1"),
+        ("test-cluster/ha-group-1", "test-cluster/node2"),
+    }
+
+    # Assert - HA manager and its CRM master
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxHAManager",
+        ["id", "quorate", "master_node", "armed_state", "resource_mode"],
+    ) == {("test-cluster/ha-manager", True, "node1", "armed", "freeze")}
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxCluster",
+        "id",
+        "ProxmoxHAManager",
+        "id",
+        "RESOURCE",
+    ) == {(TEST_CLUSTER_ID, "test-cluster/ha-manager")}
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxHAManager",
+        "id",
+        "ProxmoxNode",
+        "id",
+        "CRM_MASTER",
+    ) == {("test-cluster/ha-manager", "test-cluster/node1")}
+
+    # Assert - one LRM per node
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxHALRM",
+        ["id", "status", "state", "mode", "crm_node_state"],
+    ) == {
+        ("test-cluster/lrm:node1", "active", "active", "active", "online"),
+        (
+            "test-cluster/lrm:node2",
+            "maintenance mode",
+            "wait_for_agent_lock",
+            "maintenance",
+            "maintenance",
+        ),
+    }
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxCluster",
+        "id",
+        "ProxmoxHALRM",
+        "id",
+        "RESOURCE",
+    ) == {
+        (TEST_CLUSTER_ID, "test-cluster/lrm:node1"),
+        (TEST_CLUSTER_ID, "test-cluster/lrm:node2"),
+    }
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxHALRM",
+        "id",
+        "ProxmoxNode",
+        "id",
+        "RUNS_ON",
+    ) == {
+        ("test-cluster/lrm:node1", "test-cluster/node1"),
+        ("test-cluster/lrm:node2", "test-cluster/node2"),
+    }

@@ -17,6 +17,13 @@ MOCK_POOL_DATA = [
     },
 ]
 
+# Nested pools, listed child first to check that parents load first.
+MOCK_NESTED_POOL_DATA = [
+    {"poolid": "development/team1/frontend", "comment": "Frontend team"},
+    {"poolid": "development/team1", "comment": "Team 1"},
+    {"poolid": "development", "comment": "Development environment"},
+]
+
 MOCK_POOL_DETAILS = {
     "production": {
         "poolid": "production",

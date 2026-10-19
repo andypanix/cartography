@@ -40,14 +40,18 @@ def get_pools(proxmox_client: Any) -> list[dict[str, Any]]:
 @proxmox_api_retry
 def get_pool_details(proxmox_client: Any, poolid: str) -> dict[str, Any]:
     """
-    Get detailed information about a specific pool.
+    Get the configuration and members of one pool.
+
+    Uses GET /pools?poolid=<id>, which supports nested pool IDs such as
+    dev/team1, instead of the deprecated GET /pools/{poolid}.
 
     :param proxmox_client: Proxmox API client
     :param poolid: Pool ID
-    :return: Pool details dict
+    :return: Pool details dict, empty when the API returns no entry
     :raises: Exception if API call fails
     """
-    return proxmox_client.pools(poolid).get()
+    pools = proxmox_client.pools.get(poolid=poolid)
+    return pools[0] if pools else {}
 
 
 # ============================================================================
@@ -105,11 +109,14 @@ def transform_pool_data(
     transformed_pools = []
     pool_details = pool_details or {}
 
-    for pool in pools:
+    # Parents first, so a nested pool finds its parent node when it is loaded.
+    for pool in sorted(pools, key=lambda p: p["poolid"].count("/")):
         # Required field - use direct access
         poolid = pool["poolid"]
         members = pool_details.get(poolid, {}).get("members", [])
         vm_ids, storage_ids = _pool_member_ids(members, cluster_id)
+        # Nested pools are named parent/child, up to three levels deep.
+        parent_poolid = poolid.rpartition("/")[0] or None
 
         transformed_pools.append(
             {
@@ -117,6 +124,12 @@ def transform_pool_data(
                 "poolid": poolid,
                 "comment": pool.get("comment"),
                 "cluster_id": cluster_id,
+                "parent_poolid": parent_poolid,
+                "parent_pool_id": (
+                    cluster_scoped_id(cluster_id, parent_poolid)
+                    if parent_poolid
+                    else None
+                ),
                 "vm_ids": vm_ids,
                 "storage_ids": storage_ids,
             }
