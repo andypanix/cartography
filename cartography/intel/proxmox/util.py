@@ -2,6 +2,7 @@
 Helpers shared by the Proxmox sync modules.
 """
 
+import functools
 import logging
 from typing import Any
 from typing import Callable
@@ -92,3 +93,51 @@ def proxmox_api_retry(func: F) -> F:
     to the caller.
     """
     return cast(F, _proxmox_api_backoff(func))
+
+
+# Proxmox answers 501 for an API path the installed version does not have,
+# such as an endpoint added in Proxmox VE 9 called on 8.4.
+PROXMOX_UNAVAILABLE_STATUS_CODES = frozenset({404, 501})
+
+
+def is_unavailable_endpoint(exc: Exception) -> bool:
+    """
+    Check if a Proxmox API error means the endpoint does not exist on this host.
+
+    :param exc: The exception raised by the Proxmox API client
+    :return: True for 404 and 501 responses
+    """
+    return (
+        isinstance(exc, ResourceException)
+        and exc.status_code in PROXMOX_UNAVAILABLE_STATUS_CODES
+    )
+
+
+def proxmox_optional_endpoint(default: Callable[[], Any]) -> Callable[[F], F]:
+    """
+    Return a default value when the endpoint does not exist on this Proxmox host.
+
+    Use it for endpoints that only some supported versions provide. Apply it
+    outside proxmox_api_retry so transient errors are still retried first.
+
+    :param default: Factory for the value to return, such as list or dict
+    """
+
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return func(*args, **kwargs)
+            except ResourceException as e:
+                if not is_unavailable_endpoint(e):
+                    raise
+                logger.info(
+                    "Proxmox API endpoint for %s is not available on this host, skipping: %s",
+                    func.__name__,
+                    e,
+                )
+                return default()
+
+        return cast(F, wrapper)
+
+    return decorator

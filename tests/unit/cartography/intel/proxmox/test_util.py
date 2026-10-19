@@ -8,6 +8,7 @@ from cartography.intel.proxmox.compute import get_guest_agent_info
 from cartography.intel.proxmox.util import is_retryable_proxmox_error
 from cartography.intel.proxmox.util import PROXMOX_API_MAX_TRIES
 from cartography.intel.proxmox.util import proxmox_api_retry
+from cartography.intel.proxmox.util import proxmox_optional_endpoint
 
 
 def _resource_exception(status_code: int) -> ResourceException:
@@ -81,3 +82,20 @@ def test_get_guest_agent_info_returns_empty_on_agent_timeout():
     ]
 
     assert get_guest_agent_info(client, "node1", 100) == {}
+
+
+def test_optional_endpoint_returns_default_when_missing():
+    @proxmox_optional_endpoint(list)
+    def get_rules():
+        raise _resource_exception(501)
+
+    assert get_rules() == []
+
+
+def test_optional_endpoint_raises_other_errors():
+    @proxmox_optional_endpoint(list)
+    def get_rules():
+        raise _resource_exception(403)
+
+    with pytest.raises(ResourceException):
+        get_rules()
