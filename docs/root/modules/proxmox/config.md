@@ -23,10 +23,14 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 
 | Privilege | Used for |
 | --- | --- |
-| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall |
+| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall, node disks, SMART data, ZFS, LVM, managed directories, package versions, APT repositories, node options, DNS, time, services, PCI devices and mediated device types |
 | `VM.Audit` | VM and container configuration, guest firewall rules, backup jobs |
 | `Datastore.Audit` | Storage backends |
 | `Pool.Audit` | Resource pools |
+
+The node details need `Sys.Audit` on `/`, or on `/nodes/{node}` for the disk list, package versions, APT repositories, DNS, time and services. The PCI device and mediated device type endpoints accept either `Sys.Audit` or `Sys.Modify`, so `Sys.Audit` is enough. The subscription endpoint is readable by any user, but Proxmox returns the subscription key only with `Sys.Audit`. The privileges are the same on Proxmox VE 8.4 and 9. Cartography never calls `/nodes/{node}/apt/update`, which needs `Sys.Modify`.
+
+For each online node, the node details sync makes 14 API calls, plus one per local disk (SMART data), one per ZFS pool (pool details) and one per PCI device that supports mediated devices.
 
 ## Optional Permissions
 

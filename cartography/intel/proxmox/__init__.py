@@ -23,6 +23,7 @@ from cartography.intel.proxmox import cluster
 from cartography.intel.proxmox import compute
 from cartography.intel.proxmox import firewall
 from cartography.intel.proxmox import ha
+from cartography.intel.proxmox import node_details
 from cartography.intel.proxmox import pool
 from cartography.intel.proxmox import storage
 from cartography.models.proxmox.access import ProxmoxACLSchema
@@ -196,6 +197,16 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
 
     # Sync SSL/TLS certificates
     certificate.sync(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+        common_job_parameters,
+    )
+
+    # Sync disks, storage, packages, repositories, subscription and system
+    # settings of each online node; cleans up its own node types.
+    node_details.sync(
         neo4j_session,
         proxmox_client,
         cluster_id,

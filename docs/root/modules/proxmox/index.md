@@ -15,6 +15,13 @@ The module ingests:
 - **Access control**: users, groups, roles, and ACLs, with the resources each ACL applies to.
 - **Firewall**: cluster, node, and guest firewall rules, and cluster IP sets.
 - **Certificates**: TLS certificates installed on each node.
+- **Node hardware**: local disks with their SMART health (power-on hours, wear, reallocated sectors, temperature), ZFS pools with their state and member disks, LVM volume groups and thin pools, directory storages managed by Proxmox, and PCI devices with their IOMMU group and mediated device types.
+- **Node software**: versions of the key Proxmox packages (such as `proxmox-ve` with the running kernel, `pve-manager`, `qemu-server`, `lxc-pve` and Ceph when installed), the APT repositories and which Proxmox standard repositories are enabled, and the support subscription. Cartography keeps only the last four characters of the subscription key and never stores the key in full or the offline signature.
+- **Node system settings**: node notes, wake on LAN, ballooning target, ACME domains, DNS servers and search domain, time zone, and the state of the Proxmox system services.
+
+Node hardware, software and system settings are read only from nodes that are online. The details of a node that is offline during a sync are removed until it is online again.
+
+A `ProxmoxPhysicalDisk` keeps the kernel device name in `name`, such as `sdb` or `nvme0n1`, next to `devpath`, so it can be matched to the devices Ceph reports for an OSD. ZFS pools, LVM volume groups and managed directories link to a disk with `USES_DISK` when their device is named by kernel name, partition, or a `/dev/disk/by-id` name built from the disk WWN or serial. A device named by UUID is not linked.
 
 ```{toctree}
 config
