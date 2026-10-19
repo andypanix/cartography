@@ -5,7 +5,7 @@ Unit tests for Proxmox backup coverage, storage content, and replication transfo
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
-import pytest
+import requests
 from proxmoxer.core import ResourceException
 
 import cartography.intel.proxmox.replication as replication
@@ -13,6 +13,7 @@ import cartography.intel.proxmox.storage as storage
 from cartography.intel.proxmox.backup_coverage import transform_backup_coverage
 from cartography.intel.proxmox.backup_coverage import transform_included_volumes
 from cartography.intel.proxmox.backup_coverage import transform_vzdump_defaults
+from cartography.intel.proxmox.storage_content import listable_storage_keys
 from cartography.intel.proxmox.storage_content import plan_content_reads
 from cartography.intel.proxmox.storage_content import transform_storage_content
 from tests.data.proxmox.backup_coverage import MOCK_INCLUDED_VOLUMES
@@ -109,6 +110,15 @@ def test_plan_content_reads_lists_shared_storage_once_and_skips_guest_only_stora
         ("node1", "pbs", True),
         ("node2", "local", False),
     ]
+
+
+def test_listable_storage_keys_include_inactive_storage_and_skip_guest_only_storage():
+    assert listable_storage_keys(MOCK_NODE_STORAGE_STATUS) == {
+        ("node1", "local"),
+        ("node2", "local"),
+        (None, "pbs"),
+        (None, "nfs-old"),
+    }
 
 
 def test_transform_storage_content_scopes_local_ids_by_node():
@@ -301,14 +311,28 @@ def test_shared_storage_identity_skips_plugins_without_identity():
     }
 
 
-def test_shared_storage_identity_raises_other_server_errors():
-    """A 500 with another message is not a missing feature and stops the sync."""
+def test_shared_storage_identity_skips_failing_storage_and_reads_the_rest():
+    """A 404 or another error on one storage does not stop the identity reads."""
     client = MagicMock()
-    client.nodes.return_value.storage.return_value.identity.get.side_effect = (
-        ResourceException(500, "Internal Server Error", "storage is not online")
-    )
-    storage_list = [{"storage": "pbs", "shared": 1}]
-    status_map = {"node1": [{"storage": "pbs", "active": 1}]}
+    client.nodes.return_value.storage.return_value.identity.get.side_effect = [
+        ResourceException(404, "Not Found", "storage 'gone' does not exist"),
+        ResourceException(500, "Internal Server Error", "storage is not online"),
+        requests.exceptions.TooManyRedirects("too many redirects"),
+        {"id": "pbs-store-id", "type": "pbs"},
+    ]
+    storage_list = [
+        {"storage": "gone", "shared": 1},
+        {"storage": "down", "shared": 1},
+        {"storage": "redirect", "shared": 1},
+        {"storage": "pbs", "shared": 1},
+    ]
+    status_map = {
+        "node1": [
+            {"storage": name, "active": 1}
+            for name in ("gone", "down", "redirect", "pbs")
+        ],
+    }
 
-    with pytest.raises(ResourceException):
-        storage.get_shared_storage_identities(client, storage_list, status_map)
+    assert storage.get_shared_storage_identities(client, storage_list, status_map) == {
+        "pbs": "pbs-store-id",
+    }

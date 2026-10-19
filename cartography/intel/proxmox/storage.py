@@ -10,12 +10,12 @@ from typing import Dict
 from typing import List
 
 import neo4j
+import requests
 from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
 from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.intel.proxmox.util import proxmox_api_retry
-from cartography.intel.proxmox.util import proxmox_optional_endpoint
 from cartography.models.proxmox.storage import ProxmoxStorageSchema
 from cartography.util import timeit
 
@@ -73,20 +73,19 @@ def get_storage_status(proxmox_client: Any, node_name: str) -> List[Dict[str, An
 
 
 @timeit
-@proxmox_optional_endpoint(lambda: None)
 @proxmox_api_retry
 def get_storage_identity(
     proxmox_client: Any,
     node_name: str,
     storage_name: str,
-) -> Dict[str, Any] | None:
+) -> Dict[str, Any]:
     """
     Get the identity of a storage instance (Proxmox VE 9 only).
 
     :param proxmox_client: Proxmox API client
     :param node_name: Node to ask
     :param storage_name: Storage name
-    :return: Identity dict with id and type, or None when the endpoint does not exist
+    :return: Identity dict with id and type
     """
     return proxmox_client.nodes(node_name).storage(storage_name).identity.get()
 
@@ -100,8 +99,9 @@ def get_shared_storage_identities(
     Read the identity of each active shared storage from one node.
 
     Storage local to a node has one identity per node and is skipped, and so
-    is storage whose plugin does not implement an identity. The reads stop at
-    the first host that does not have the endpoint, such as Proxmox VE 8.
+    is storage whose plugin does not implement an identity or whose read
+    fails. The reads stop at the first HTTP 501, which means the host does not
+    have the endpoint, such as Proxmox VE 8.
 
     :param proxmox_client: Proxmox API client
     :param storage_list: Raw storage definitions from API
@@ -129,15 +129,36 @@ def get_shared_storage_identities(
         try:
             identity = get_storage_identity(proxmox_client, node_name, storage_name)
         except ResourceException as e:
-            if not is_storage_identity_not_implemented_error(e):
-                raise
-            logger.info(
-                "Storage %s has no identity on this storage type, skipping",
+            if e.status_code == 501:
+                logger.info(
+                    "Storage identity endpoint is not available on this host, "
+                    "skipping: %s",
+                    e,
+                )
+                break
+            if is_storage_identity_not_implemented_error(e) or e.status_code == 404:
+                logger.info(
+                    "Storage %s has no identity on node %s, skipping: %s",
+                    storage_name,
+                    node_name,
+                    e,
+                )
+            else:
+                logger.warning(
+                    "Could not read identity of storage %s on node %s, skipping: %s",
+                    storage_name,
+                    node_name,
+                    e,
+                )
+            continue
+        except requests.exceptions.RequestException as e:
+            logger.warning(
+                "Could not read identity of storage %s on node %s, skipping: %s",
                 storage_name,
+                node_name,
+                e,
             )
             continue
-        if identity is None:
-            break
         if identity.get("id"):
             identities[storage_name] = identity["id"]
     return identities

@@ -37,6 +37,8 @@ The number of API calls grows with the cluster. For N online nodes and J backup 
 - Storage identity makes one call per active shared storage on Proxmox VE 9, and one call in total on Proxmox VE 8.4.
 - Replication makes `N + 2` calls. A per-job status call is only added when a node returns a job without its state.
 
+When a storage content listing fails, Cartography logs a warning with the node and storage and goes on with the rest of the sync. The backup archives, ISO images and container templates of a storage that is not read in a run, because the listing failed or the storage is inactive or disabled, are kept as seen in the last successful listing. An offline Proxmox Backup Server therefore does not make its guests look unbacked. Content of a storage that no node reports any more, for example after it is removed from the configuration, is deleted. A failed storage identity read is skipped in the same way, storage by storage.
+
 ## Optional Permissions
 
 `--proxmox-enable-guest-agent` queries the QEMU guest agent of running VMs. This needs `VM.Monitor` on Proxmox VE 8, or `VM.GuestAgent.Audit` on Proxmox VE 9, which `PVEAuditor` does not include. Without it, Cartography logs the failure and syncs the VMs without guest agent data.

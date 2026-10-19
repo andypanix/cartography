@@ -2,9 +2,12 @@
 Integration tests for Proxmox backup coverage, storage content, and replication.
 """
 
+import copy
 from typing import Any
 from unittest.mock import MagicMock
 from unittest.mock import patch
+
+from proxmoxer.core import ResourceException
 
 import cartography.intel.proxmox.backup
 import cartography.intel.proxmox.backup_coverage as backup_coverage
@@ -82,7 +85,15 @@ def _sync(
     included: dict[str, Any],
     content: dict[tuple[str, str], list[dict[str, Any]]],
     replication_jobs: list[dict[str, Any]],
+    storage_status: dict[str, list[dict[str, Any]]] | None = None,
+    not_backed_up: list[dict[str, Any]] | None = None,
 ) -> None:
+    def _content(_client, node, storage):
+        volumes = content.get((node, storage), [])
+        if isinstance(volumes, Exception):
+            raise volumes
+        return volumes
+
     params = {"UPDATE_TAG": update_tag, "CLUSTER_ID": CLUSTER}
     client = MagicMock()
     with (
@@ -102,7 +113,9 @@ def _sync(
         patch.object(
             backup_coverage,
             "get_not_backed_up",
-            return_value=MOCK_NOT_BACKED_UP,
+            return_value=(
+                MOCK_NOT_BACKED_UP if not_backed_up is None else not_backed_up
+            ),
         ),
         patch.object(
             backup_coverage,
@@ -112,7 +125,7 @@ def _sync(
         patch.object(
             storage_content,
             "get_storage_content",
-            side_effect=lambda _c, node, storage: content.get((node, storage), []),
+            side_effect=_content,
         ),
         patch.object(
             replication,
@@ -137,7 +150,7 @@ def _sync(
             CLUSTER,
             update_tag,
             params,
-            MOCK_NODE_STORAGE_STATUS,
+            MOCK_NODE_STORAGE_STATUS if storage_status is None else storage_status,
         )
         replication.sync(neo4j_session, client, CLUSTER, update_tag, params)
         backup_coverage.cleanup(neo4j_session, params)
@@ -333,3 +346,177 @@ def test_cleanup_removes_stale_coverage_content_and_replication(neo4j_session):
     assert check_nodes(neo4j_session, "ProxmoxReplicationJob", ["id"]) == {
         ("test-cluster/100-0",),
     }
+
+
+LOCAL_BACKUP = "local:backup/vzdump-qemu-100-2026_10_01-02_00_00.vma.zst"
+PBS_ARCHIVES = {
+    "test-cluster/pbs:backup/ct/200/2026-10-01T03:00:00Z",
+    "test-cluster/pbs:backup/vm/100/2026-10-01T02:00:00Z",
+}
+
+
+def _next_run(neo4j_session) -> int:
+    """Refresh the nodes other modules own, as the next full sync would."""
+    next_tag = TEST_UPDATE_TAG + 1
+    neo4j_session.run(
+        "MATCH (n) WHERE n:ProxmoxVM OR n:ProxmoxNode OR n:ProxmoxStorage "
+        "OR n:ProxmoxDisk OR n:ProxmoxBackupJob SET n.lastupdated = $tag",
+        tag=next_tag,
+    )
+    return next_tag
+
+
+def _archive_ids(neo4j_session) -> set[str]:
+    return {
+        node_id
+        for (node_id,) in check_nodes(neo4j_session, "ProxmoxBackupArchive", ["id"])
+        or set()
+    }
+
+
+def test_failing_content_listing_keeps_its_content_and_syncs_the_rest(neo4j_session):
+    _seed(neo4j_session, TEST_UPDATE_TAG)
+    _sync(
+        neo4j_session,
+        TEST_UPDATE_TAG,
+        MOCK_INCLUDED_VOLUMES,
+        MOCK_STORAGE_CONTENT,
+        MOCK_REPLICATION_JOBS,
+    )
+
+    # Act - the PBS listing fails with a 500 while node2 local is now empty
+    next_tag = _next_run(neo4j_session)
+    content: dict[tuple[str, str], Any] = {
+        **MOCK_STORAGE_CONTENT,
+        ("node1", "pbs"): ResourceException(
+            500, "Internal Server Error", "pbs: error fetching datastores"
+        ),
+        ("node2", "local"): [],
+    }
+    _sync(
+        neo4j_session,
+        next_tag,
+        MOCK_INCLUDED_VOLUMES,
+        content,
+        MOCK_REPLICATION_JOBS[:1],
+    )
+
+    # The PBS archives survive with their links, node2 local is cleaned up
+    assert _archive_ids(neo4j_session) == PBS_ARCHIVES | {
+        f"test-cluster/node1/{LOCAL_BACKUP}",
+    }
+    assert check_nodes(
+        neo4j_session, "ProxmoxBackupArchive", ["id", "lastupdated"]
+    ) == {(node_id, next_tag) for node_id in _archive_ids(neo4j_session)}
+    assert _rels(neo4j_session, "ProxmoxBackupArchive", "BACKUP_OF", "ProxmoxVM") >= {
+        (
+            "test-cluster/pbs:backup/vm/100/2026-10-01T02:00:00Z",
+            "test-cluster/node1/qemu/100",
+        ),
+    }
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxBackupArchive",
+        ["id", "verification_state"],
+    ) >= {("test-cluster/pbs:backup/vm/100/2026-10-01T02:00:00Z", "failed")}
+    # The sync went on after the failure
+    assert check_nodes(neo4j_session, "ProxmoxReplicationJob", ["id"]) == {
+        ("test-cluster/100-0",),
+    }
+
+
+def test_archive_on_inactive_storage_survives_the_next_sync(neo4j_session):
+    _seed(neo4j_session, TEST_UPDATE_TAG)
+    _sync(
+        neo4j_session,
+        TEST_UPDATE_TAG,
+        MOCK_INCLUDED_VOLUMES,
+        MOCK_STORAGE_CONTENT,
+        MOCK_REPLICATION_JOBS,
+    )
+
+    # Act - the backup server goes offline: pbs is inactive on every node
+    next_tag = _next_run(neo4j_session)
+    storage_status = copy.deepcopy(MOCK_NODE_STORAGE_STATUS)
+    for status_list in storage_status.values():
+        for status in status_list:
+            if status["storage"] == "pbs":
+                status["active"] = 0
+    content = {k: v for k, v in MOCK_STORAGE_CONTENT.items() if k[1] != "pbs"}
+    _sync(
+        neo4j_session,
+        next_tag,
+        MOCK_INCLUDED_VOLUMES,
+        content,
+        MOCK_REPLICATION_JOBS,
+        storage_status=storage_status,
+    )
+
+    assert _archive_ids(neo4j_session) >= PBS_ARCHIVES
+    assert _rels(
+        neo4j_session, "ProxmoxBackupArchive", "STORED_ON", "ProxmoxStorage"
+    ) >= {(archive_id, "test-cluster/pbs") for archive_id in PBS_ARCHIVES}
+
+
+def test_content_of_storage_removed_from_configuration_is_cleaned_up(neo4j_session):
+    _seed(neo4j_session, TEST_UPDATE_TAG)
+    _sync(
+        neo4j_session,
+        TEST_UPDATE_TAG,
+        MOCK_INCLUDED_VOLUMES,
+        MOCK_STORAGE_CONTENT,
+        MOCK_REPLICATION_JOBS,
+    )
+
+    # Act - pbs is no longer configured, so no node reports it
+    next_tag = _next_run(neo4j_session)
+    storage_status = {
+        node: [status for status in status_list if status["storage"] != "pbs"]
+        for node, status_list in MOCK_NODE_STORAGE_STATUS.items()
+    }
+    content = {k: v for k, v in MOCK_STORAGE_CONTENT.items() if k[1] != "pbs"}
+    _sync(
+        neo4j_session,
+        next_tag,
+        MOCK_INCLUDED_VOLUMES,
+        content,
+        MOCK_REPLICATION_JOBS,
+        storage_status=storage_status,
+    )
+
+    assert _archive_ids(neo4j_session) == {
+        f"test-cluster/node1/{LOCAL_BACKUP}",
+        f"test-cluster/node2/{LOCAL_BACKUP}",
+    }
+
+
+def test_backup_covered_flips_back_when_coverage_is_removed(neo4j_session):
+    _seed(neo4j_session, TEST_UPDATE_TAG)
+    _sync(
+        neo4j_session,
+        TEST_UPDATE_TAG,
+        MOCK_INCLUDED_VOLUMES,
+        MOCK_STORAGE_CONTENT,
+        MOCK_REPLICATION_JOBS,
+    )
+
+    # Act - no job covers guest 100 any more
+    next_tag = _next_run(neo4j_session)
+    _sync(
+        neo4j_session,
+        next_tag,
+        {},
+        MOCK_STORAGE_CONTENT,
+        MOCK_REPLICATION_JOBS,
+        not_backed_up=[
+            *MOCK_NOT_BACKED_UP,
+            {"vmid": 100, "type": "qemu", "name": "web"},
+        ],
+    )
+
+    assert check_nodes(neo4j_session, "ProxmoxVM", ["id", "backup_covered"]) == {
+        ("test-cluster/node1/qemu/100", False),
+        ("test-cluster/node1/qemu/101", False),
+        ("test-cluster/node2/lxc/200", True),
+    }
+    assert _rels(neo4j_session, "ProxmoxBackupJob", "COVERS", "ProxmoxVM") == set()
