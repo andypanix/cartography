@@ -14,6 +14,7 @@ import cartography.intel.proxmox
 import cartography.intel.proxmox.access
 import cartography.intel.proxmox.backup
 import cartography.intel.proxmox.backup_coverage
+import cartography.intel.proxmox.ceph
 import cartography.intel.proxmox.certificate
 import cartography.intel.proxmox.cluster
 import cartography.intel.proxmox.compute
@@ -34,6 +35,8 @@ from tests.integration.util import check_rels
 CLUSTER_A = "cluster-a"
 CLUSTER_B = "cluster-b"
 CLUSTERS = (CLUSTER_A, CLUSTER_B)
+# Both clusters report the same Ceph fsid, as clones of one template would.
+CEPH_FSID = "00000000-0000-4000-8000-000000000000"
 
 # Graph ID of each resource inside a cluster, without the cluster prefix.
 # Both clusters use the same natural names.
@@ -86,6 +89,14 @@ SCOPED_IDS = {
     "ProxmoxBackupArchive": "pve/local:backup/vzdump-qemu-100-2026_01_01-00_00_00.vma.zst",
     "ProxmoxStorageTemplate": "pve/local:iso/debian.iso",
     "ProxmoxReplicationJob": "100-0",
+    "ProxmoxCephCluster": CEPH_FSID,
+    "ProxmoxCephMonitor": "mon.pve",
+    "ProxmoxCephManager": "mgr.pve",
+    "ProxmoxCephMetadataServer": "mds.pve",
+    "ProxmoxCephOSD": "osd.0",
+    "ProxmoxCephPool": "pool:rbd",
+    "ProxmoxCephCrushRule": "crush_rule:replicated_rule",
+    "ProxmoxCephFilesystem": "fs:cephfs",
 }
 
 
@@ -102,7 +113,52 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
     firewall = cartography.intel.proxmox.firewall
     mapping = cartography.intel.proxmox.mapping
     integrations = cartography.intel.proxmox.integrations
+    ceph = cartography.intel.proxmox.ceph
     return [
+        (
+            ceph,
+            "get_ceph_status",
+            {"fsid": CEPH_FSID, "health": {"status": "HEALTH_OK"}},
+        ),
+        (ceph, "get_ceph_metadata", {"node": {"pve": {}}}),
+        (ceph, "get_ceph_flags", []),
+        (ceph, "get_ceph_health_mutes", []),
+        (ceph, "get_ceph_monitors", [{"name": "pve", "host": "pve"}]),
+        (ceph, "get_ceph_managers", [{"name": "pve", "host": "pve"}]),
+        (
+            ceph,
+            "get_ceph_metadata_servers",
+            [{"name": "pve", "host": "pve", "fs_name": "cephfs"}],
+        ),
+        (
+            ceph,
+            "get_ceph_osd_tree",
+            {
+                "root": {
+                    "children": [
+                        {
+                            "type": "host",
+                            "name": "pve",
+                            "children": [{"id": 0, "type": "osd", "name": "osd.0"}],
+                        },
+                    ],
+                },
+            },
+        ),
+        (ceph, "get_ceph_osd_metadata", {}),
+        (ceph, "get_ceph_osd_lv_info", {}),
+        (ceph, "get_ceph_rules", [{"name": "replicated_rule"}]),
+        (
+            ceph,
+            "get_ceph_pools",
+            [{"pool_name": "rbd", "crush_rule_name": "replicated_rule"}],
+        ),
+        (ceph, "get_ceph_pool_status", {}),
+        (
+            ceph,
+            "get_ceph_filesystems",
+            [{"name": "cephfs", "metadata_pool": "rbd", "data_pool": "rbd"}],
+        ),
         (
             cluster,
             "get_cluster_status",
@@ -547,6 +603,11 @@ def test_two_clusters_with_identical_names_stay_separate(neo4j_session):
         ("ProxmoxNode", "HAS_CONFIG", "ProxmoxNodeConfig"),
         ("ProxmoxNode", "HAS_SERVICE", "ProxmoxService"),
         ("ProxmoxNode", "HAS_PCI_DEVICE", "ProxmoxPCIDevice"),
+        ("ProxmoxCephOSD", "RUNS_ON", "ProxmoxNode"),
+        ("ProxmoxCephMonitor", "MEMBER_OF_CEPH_CLUSTER", "ProxmoxCephCluster"),
+        ("ProxmoxCephPool", "USES_CRUSH_RULE", "ProxmoxCephCrushRule"),
+        ("ProxmoxCephFilesystem", "USES_POOL", "ProxmoxCephPool"),
+        ("ProxmoxCephMetadataServer", "SERVES", "ProxmoxCephFilesystem"),
     )
     for source, rel, target in cluster_edges:
         assert check_rels(

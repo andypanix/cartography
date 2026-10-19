@@ -23,11 +23,13 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 
 | Privilege | Used for |
 | --- | --- |
-| `Sys.Audit` | Cluster status and options, Corosync configuration and QDevice status, nodes, node networks, certificates, users, API tokens, second factors, realms, realm sync jobs, groups, roles, ACLs, HA groups, resources, rules and status, cluster and node firewall (rules, options, security groups, aliases, IP sets), guests and volumes included in backup jobs, guests not covered by backups, all fields of the node vzdump defaults, metric servers, node disks, SMART data, ZFS, LVM, managed directories, package versions, APT repositories, node options, DNS, time, services, PCI devices and mediated device types |
+| `Sys.Audit` | Cluster status and options, Corosync configuration and QDevice status, nodes, node networks, certificates, users, API tokens, second factors, realms, realm sync jobs, groups, roles, ACLs, HA groups, resources, rules and status, cluster and node firewall (rules, options, security groups, aliases, IP sets), Ceph (OSD flags, OSD details, and OSD volumes need `Sys.Audit`; the other Ceph endpoints accept `Sys.Audit` or `Datastore.Audit`), guests and volumes included in backup jobs, guests not covered by backups, all fields of the node vzdump defaults, metric servers, node disks, SMART data, ZFS, LVM, managed directories, package versions, APT repositories, node options, DNS, time, services, PCI devices and mediated device types |
 | `VM.Audit` | VM and container configuration, snapshots, cloud-init values, container IP addresses, VM and container firewall (rules, options, aliases, IP sets), backup jobs, replication jobs and their state |
 | `Datastore.Audit` | Storage backends, storage content (backup archives, ISO images, container templates), storage identity (Proxmox VE 9), node vzdump defaults (on the default backup storage) |
 | `Pool.Audit` | Resource pools, including nested pools. Cartography lists only the pools where the user has `Pool.Audit`. |
 | `Mapping.Audit` | PCI, USB, and directory resource mappings; notification targets, endpoints, and matchers on `/mapping/notifications`; custom CPU models (Proxmox VE 9 only; skipped on Proxmox VE 8.4) |
+
+Ceph muted health checks (`/cluster/ceph/health-mute`) exist only on Proxmox VE 9. On Proxmox VE 8.4 Cartography syncs Ceph without them.
 
 Cartography does not read `/storage/{storage}`: it requires `Datastore.Allocate`, and `/storage` already returns the storage configuration. The storage identity endpoint exists only on Proxmox VE 9; on Proxmox VE 8.4 Cartography skips it.
 

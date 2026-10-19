@@ -19,6 +19,7 @@ from cartography.graph.job import GraphJob
 from cartography.intel.proxmox import access
 from cartography.intel.proxmox import backup
 from cartography.intel.proxmox import backup_coverage
+from cartography.intel.proxmox import ceph
 from cartography.intel.proxmox import certificate
 from cartography.intel.proxmox import cluster
 from cartography.intel.proxmox import compute
@@ -156,6 +157,17 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
 
     # Sync storage before compute so disks can link to their storage
     storage_status_map = storage.sync(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+        common_job_parameters,
+    )
+
+    # Sync the hyper-converged Ceph cluster, after storage so RBD and CephFS
+    # storage can link to their pools and file systems. False means Ceph could
+    # not be read, so its cleanup is skipped to keep the existing Ceph data.
+    ceph_current = ceph.sync(
         neo4j_session,
         proxmox_client,
         cluster_id,
@@ -378,6 +390,10 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
         neo4j_session
     )
 
+    if ceph_current:
+        ceph.cleanup(neo4j_session, common_job_parameters)
+    else:
+        logger.warning("Skipping Ceph cleanup: the Ceph data could not be read")
     backup_coverage.cleanup(neo4j_session, common_job_parameters)
     storage_content.cleanup(neo4j_session, common_job_parameters)
     replication.cleanup(neo4j_session, common_job_parameters)
