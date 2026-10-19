@@ -6,6 +6,9 @@ from contextlib import ExitStack
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+from proxmoxer.core import ResourceException
+
 import cartography.intel.proxmox.sdn as sdn
 from tests.data.proxmox import sdn as data
 from tests.integration.util import check_nodes
@@ -469,6 +472,149 @@ def test_sync_sdn_removes_stale_data(neo4j_session):
         ).single()["c"]
         == 0
     )
+
+
+def _frr_error(*args: Any) -> None:
+    raise ResourceException(500, "Internal Server Error", "FRR not responding")
+
+
+def _failing_on(node_name: str, getter_name: str) -> Any:
+    """The default getter, raising an HTTP 500 for one node."""
+    default = _getters()[getter_name]
+
+    def getter(client: Any, node: str, *args: Any) -> Any:
+        if node == node_name:
+            _frr_error()
+        return default(client, node, *args)
+
+    return getter
+
+
+def _node_state_snapshot(neo4j_session: Any) -> dict[str, set]:
+    """Per-node SDN state, with list properties as tuples."""
+    queries = {
+        "deployed": """
+            MATCH (s)-[r:DEPLOYED_ON]->(n:ProxmoxNode)
+            RETURN s.id AS s, n.id AS n, r.status AS status,
+                   r.ip_vrf AS ip_vrf, r.mac_vrf AS mac_vrf
+            """,
+        "bridges": """
+            MATCH (n:ProxmoxNode)-[:HAS_SDN_BRIDGE]->(b:ProxmoxSDNBridge)-[:IMPLEMENTS]->(v)
+            OPTIONAL MATCH (b)-[:HAS_PORT]->(p:ProxmoxSDNBridgePort)
+            OPTIONAL MATCH (i:ProxmoxNetworkInterface)-[:PLUGGED_INTO]->(p)
+            RETURN n.id AS n, b.id AS b, v.id AS v, b.ports AS ports,
+                   p.id AS p, i.id AS i
+            """,
+        "fabric": """
+            MATCH (f:ProxmoxSDNFabricNode)
+            OPTIONAL MATCH (f)-[r:FABRIC_NEIGHBOR]->(g)
+            OPTIONAL MATCH (f)-[u:USES_INTERFACE]->(i)
+            RETURN f.id AS f, f.neighbors AS neighbors, f.routes AS routes,
+                   g.id AS g, r.status AS status, i.id AS i, u.state AS state
+            """,
+    }
+    return {
+        name: {
+            tuple(tuple(v) if isinstance(v, list) else v for v in row.values())
+            for row in neo4j_session.run(query)
+        }
+        for name, query in queries.items()
+    }
+
+
+def test_sync_sdn_keeps_state_of_a_failing_node(neo4j_session):
+    # Arrange
+    _reset(neo4j_session)
+    _seed(neo4j_session, C)
+    _run_sync(neo4j_session, _getters())
+    before = _node_state_snapshot(neo4j_session)
+
+    # Act - FRR of pve1 answers 500, pve2 drops its zone deployment
+    _run_sync(
+        neo4j_session,
+        _getters(
+            get_node_zones=lambda client, node: (
+                _frr_error() if node == "pve1" else []
+            ),
+            get_node_fabric_routes=_failing_on("pve1", "get_node_fabric_routes"),
+        ),
+        update_tag=TEST_UPDATE_TAG + 1,
+    )
+
+    # Assert - pve1 keeps its last known state, pve2 state is refreshed
+    after = _node_state_snapshot(neo4j_session)
+    assert after["deployed"] == {
+        row for row in before["deployed"] if row[1] == f"{C}/pve1"
+    }
+    assert {row[1] for row in before["deployed"]} == {f"{C}/pve1", f"{C}/pve2"}
+    assert after["bridges"] == before["bridges"]
+    assert after["fabric"] == before["fabric"]
+    assert check_nodes(neo4j_session, "ProxmoxSDNVNet", ["id"]) == {
+        (f"{C}/vnet1",),
+        (f"{C}/vlan10",),
+    }
+
+    # Act - pve1 answers again without its EVPN zone
+    _run_sync(
+        neo4j_session,
+        _getters(
+            get_node_zones=lambda client, node: data.MOCK_NODE_ZONES[node][1:],
+        ),
+        update_tag=TEST_UPDATE_TAG + 2,
+    )
+
+    # Assert - its stale EVPN zone state is cleaned up
+    after = _node_state_snapshot(neo4j_session)
+    assert {(row[0], row[1]) for row in after["deployed"]} == {
+        (f"{C}/vlan1", f"{C}/pve1"),
+        (f"{C}/vlan10", f"{C}/pve1"),
+    }
+    assert after["bridges"] == set()
+
+
+def test_sync_sdn_skips_a_failing_vrf(neo4j_session):
+    # Arrange
+    _reset(neo4j_session)
+    _seed(neo4j_session, C)
+
+    # Act - first sync, the EVPN VRF table of pve1 answers 500
+    _run_sync(
+        neo4j_session,
+        _getters(get_node_zone_ip_vrf=_failing_on("pve1", "get_node_zone_ip_vrf")),
+    )
+
+    # Assert - only the EVPN zone of pve1 is missing, the rest is loaded
+    zone_links = neo4j_session.run(
+        """
+        MATCH (z:ProxmoxSDNZone)-[:DEPLOYED_ON]->(n:ProxmoxNode)
+        RETURN z.id AS zone, n.id AS node
+        """,
+    ).data()
+    assert {(r["zone"], r["node"]) for r in zone_links} == {
+        (f"{C}/vlan1", f"{C}/pve1"),
+        (f"{C}/vlan1", f"{C}/pve2"),
+    }
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxSDNFabricNode",
+        "id",
+        "ProxmoxSDNFabricNode",
+        "id",
+        "FABRIC_NEIGHBOR",
+    ) == {
+        (f"{C}/fab1:pve1", f"{C}/fab1:pve2"),
+        (f"{C}/fab1:pve2", f"{C}/fab1:pve1"),
+    }
+
+
+def test_sync_sdn_propagates_cluster_configuration_errors(neo4j_session):
+    # Arrange
+    _reset(neo4j_session)
+    _seed(neo4j_session, C)
+
+    # Act and assert
+    with pytest.raises(ResourceException):
+        _run_sync(neo4j_session, _getters(get_vnets=lambda client: _frr_error()))
 
 
 def test_sync_sdn_keeps_clusters_apart(neo4j_session):

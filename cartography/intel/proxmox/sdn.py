@@ -18,9 +18,12 @@ import logging
 from typing import Any
 
 import neo4j
+import requests
+from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
 from cartography.client.core.tx import load_matchlinks
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.graph.job import GraphJob
 from cartography.intel.proxmox.cluster import get_nodes
 from cartography.intel.proxmox.firewall import load_firewall_rules
@@ -742,7 +745,14 @@ def transform_ipam_entries(
     """
     result = []
     for ipam, entries in entries_by_ipam.items():
+        # The API schema does not type the status response, so skip anything
+        # that is not a list of entry dicts instead of failing the sync.
+        if not isinstance(entries, list):
+            logger.warning("Ignoring IPAM %s status that is not a list", ipam)
+            continue
         for entry in entries:
+            if not isinstance(entry, dict):
+                continue
             ip = entry.get("ip")
             if not ip:
                 continue
@@ -1256,6 +1266,181 @@ def load_sdn_matchlinks(
 # ============================================================================
 
 
+class NodeStateUnavailable(Exception):
+    """A node could not report part of its SDN state."""
+
+    def __init__(self, endpoint: str, error: Exception) -> None:
+        super().__init__(f"{endpoint}: {error}")
+        self.endpoint = endpoint
+        self.error = error
+
+
+def _read_node_state(endpoint: str, getter: Any, *args: Any) -> Any:
+    """
+    Call a per-node SDN state getter and name the endpoint when it fails.
+
+    FRR or the SDN daemons of a single node can fail, for example with an HTTP
+    500 from the VRF or fabric endpoints, while the cluster configuration and
+    the other nodes answer. Such an error must not stop the whole SDN sync.
+
+    :param endpoint: API path of the getter, for the log
+    :param getter: The getter to call
+    :return: What the getter returns
+    :raises NodeStateUnavailable: When the API answers with an error
+    """
+    try:
+        return getter(*args)
+    except (ResourceException, requests.exceptions.RequestException) as e:
+        raise NodeStateUnavailable(endpoint, e) from e
+
+
+def _read_zone_state(
+    proxmox_client: Any,
+    cluster_id: str,
+    node_name: str,
+    node_zone: dict[str, Any],
+    zone_types: dict[str, Any],
+    vnet_zones: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    """
+    Read and transform what one node reports for one SDN zone.
+
+    :raises NodeStateUnavailable: When one of the zone endpoints fails
+    """
+    zone = node_zone["zone"]
+    node_id = cluster_scoped_id(cluster_id, node_name)
+    is_evpn = zone_types.get(zone) == EVPN_ZONE_TYPE
+    ip_vrf = (
+        format_ip_vrf(
+            _read_node_state(
+                "/nodes/{node}/sdn/zones/{zone}/ip-vrf",
+                get_node_zone_ip_vrf,
+                proxmox_client,
+                node_name,
+                zone,
+            ),
+        )
+        if is_evpn
+        else []
+    )
+    zone_state: dict[str, list[dict[str, Any]]] = {
+        "zone_links": [
+            {
+                "zone_id": cluster_scoped_id(cluster_id, zone),
+                "node_id": node_id,
+                "status": node_zone.get("status"),
+                "ip_vrf": ip_vrf,
+            },
+        ],
+        "vnet_links": [],
+    }
+
+    contents = _read_node_state(
+        "/nodes/{node}/sdn/zones/{zone}/content",
+        get_node_zone_content,
+        proxmox_client,
+        node_name,
+        zone,
+    )
+    for content in contents:
+        vnet = content.get("vnet")
+        if not vnet:
+            continue
+        mac_vrf = (
+            format_mac_vrf(
+                _read_node_state(
+                    "/nodes/{node}/sdn/vnets/{vnet}/mac-vrf",
+                    get_node_vnet_mac_vrf,
+                    proxmox_client,
+                    node_name,
+                    vnet,
+                ),
+            )
+            if is_evpn and vnet in vnet_zones
+            else []
+        )
+        zone_state["vnet_links"].append(
+            {
+                "vnet_id": cluster_scoped_id(cluster_id, vnet),
+                "node_id": node_id,
+                "status": content.get("status"),
+                "statusmsg": content.get("statusmsg"),
+                "mac_vrf": mac_vrf,
+            },
+        )
+
+    zone_state["bridges"], zone_state["ports"] = transform_bridges(
+        _read_node_state(
+            "/nodes/{node}/sdn/zones/{zone}/bridges",
+            get_node_zone_bridges,
+            proxmox_client,
+            node_name,
+            zone,
+        ),
+        node_name,
+        zone,
+        cluster_id,
+    )
+    return zone_state
+
+
+def _read_fabric_state(
+    proxmox_client: Any,
+    cluster_id: str,
+    fabric_node_raw: dict[str, Any],
+    fabric_node: dict[str, Any],
+    fabric_peers: dict[str, str],
+) -> dict[str, list[dict[str, Any]]]:
+    """
+    Read and transform what one node reports for one fabric.
+
+    Fills the neighbors and routes of the fabric node only when every fabric
+    endpoint answered.
+
+    :raises NodeStateUnavailable: When one of the fabric endpoints fails
+    """
+    node_name = fabric_node_raw["node_id"]
+    fabric = fabric_node_raw["fabric_id"]
+    neighbors = _read_node_state(
+        "/nodes/{node}/sdn/fabrics/{fabric}/neighbors",
+        get_node_fabric_neighbors,
+        proxmox_client,
+        node_name,
+        fabric,
+    )
+    routes = _read_node_state(
+        "/nodes/{node}/sdn/fabrics/{fabric}/routes",
+        get_node_fabric_routes,
+        proxmox_client,
+        node_name,
+        fabric,
+    )
+    interfaces = _read_node_state(
+        "/nodes/{node}/sdn/fabrics/{fabric}/interfaces",
+        get_node_fabric_interfaces,
+        proxmox_client,
+        node_name,
+        fabric,
+    )
+    fabric_node["neighbors"] = [
+        str(n["neighbor"]) for n in neighbors if n.get("neighbor")
+    ]
+    fabric_node["routes"] = format_fabric_routes(routes)
+    return {
+        "neighbor_links": resolve_fabric_neighbors(
+            fabric_node["id"],
+            neighbors,
+            fabric_peers,
+        ),
+        "interface_links": transform_fabric_interfaces(
+            fabric_node_raw,
+            fabric_node["id"],
+            interfaces,
+            cluster_id,
+        ),
+    }
+
+
 def _sync_node_state(
     proxmox_client: Any,
     cluster_id: str,
@@ -1263,11 +1448,17 @@ def _sync_node_state(
     vnets: list[dict[str, Any]],
     fabric_nodes_raw: list[dict[str, Any]],
     fabric_nodes: list[dict[str, Any]],
-) -> dict[str, list[dict[str, Any]]]:
+) -> tuple[dict[str, list[dict[str, Any]]], set[tuple[str, str | None]], set[str]]:
     """
     Read and transform what each online node reports for the SDN configuration.
 
-    Fills the neighbors and routes of the fabric nodes in place.
+    Fills the neighbors and routes of the fabric nodes in place. A node that
+    fails to report a zone or a fabric is logged and skipped, and the sync goes
+    on with the next zone, fabric or node. Errors listing the nodes propagate.
+
+    :return: The node state, the (node name, zone name) pairs whose state could
+        not be read, with zone None when the node could not list its zones, and
+        the IDs of the fabric nodes whose state could not be read
     """
     zone_types = {zone["zone"]: zone.get("type") for zone in zones}
     vnet_zones = {vnet["vnet"]: vnet.get("zone") for vnet in vnets}
@@ -1282,60 +1473,57 @@ def _sync_node_state(
         "neighbor_links": [],
         "interface_links": [],
     }
+    failed_zones: set[tuple[str, str | None]] = set()
+    failed_fabric_nodes: set[str] = set()
 
     for node in get_nodes(proxmox_client):
         node_name = node["node"]
         if node.get("status") != "online":
             logger.info("Skipping SDN state of offline node %s", node_name)
             continue
-        node_id = cluster_scoped_id(cluster_id, node_name)
 
-        for node_zone in get_node_zones(proxmox_client, node_name):
-            zone = node_zone["zone"]
-            is_evpn = zone_types.get(zone) == EVPN_ZONE_TYPE
-            ip_vrf = (
-                format_ip_vrf(get_node_zone_ip_vrf(proxmox_client, node_name, zone))
-                if is_evpn
-                else []
-            )
-            state["zone_links"].append(
-                {
-                    "zone_id": cluster_scoped_id(cluster_id, zone),
-                    "node_id": node_id,
-                    "status": node_zone.get("status"),
-                    "ip_vrf": ip_vrf,
-                },
-            )
-
-            for content in get_node_zone_content(proxmox_client, node_name, zone):
-                vnet = content.get("vnet")
-                if not vnet:
-                    continue
-                mac_vrf = (
-                    format_mac_vrf(
-                        get_node_vnet_mac_vrf(proxmox_client, node_name, vnet),
-                    )
-                    if is_evpn and vnet in vnet_zones
-                    else []
-                )
-                state["vnet_links"].append(
-                    {
-                        "vnet_id": cluster_scoped_id(cluster_id, vnet),
-                        "node_id": node_id,
-                        "status": content.get("status"),
-                        "statusmsg": content.get("statusmsg"),
-                        "mac_vrf": mac_vrf,
-                    },
-                )
-
-            bridges, ports = transform_bridges(
-                get_node_zone_bridges(proxmox_client, node_name, zone),
+        try:
+            node_zones = _read_node_state(
+                "/nodes/{node}/sdn/zones",
+                get_node_zones,
+                proxmox_client,
                 node_name,
-                zone,
-                cluster_id,
             )
-            state["bridges"].extend(bridges)
-            state["ports"].extend(ports)
+        except NodeStateUnavailable as e:
+            logger.warning(
+                "Could not read SDN zones of node %s from %s, keeping its last "
+                "known zone state: %s",
+                node_name,
+                e.endpoint,
+                e.error,
+            )
+            failed_zones.add((node_name, None))
+            node_zones = []
+
+        for node_zone in node_zones:
+            zone = node_zone["zone"]
+            try:
+                zone_state = _read_zone_state(
+                    proxmox_client,
+                    cluster_id,
+                    node_name,
+                    node_zone,
+                    zone_types,
+                    vnet_zones,
+                )
+            except NodeStateUnavailable as e:
+                logger.warning(
+                    "Could not read SDN zone %s of node %s from %s, keeping its "
+                    "last known state: %s",
+                    zone,
+                    node_name,
+                    e.endpoint,
+                    e.error,
+                )
+                failed_zones.add((node_name, zone))
+                continue
+            for key, items in zone_state.items():
+                state[key].extend(items)
 
         for fabric_node_raw in fabric_nodes_raw:
             if (
@@ -1345,32 +1533,153 @@ def _sync_node_state(
                 continue
             fabric = fabric_node_raw["fabric_id"]
             fabric_node_id = cluster_scoped_id(cluster_id, f"{fabric}:{node_name}")
-            fabric_node = fabric_nodes_by_id[fabric_node_id]
-
-            neighbors = get_node_fabric_neighbors(proxmox_client, node_name, fabric)
-            fabric_node["neighbors"] = [
-                str(n["neighbor"]) for n in neighbors if n.get("neighbor")
-            ]
-            state["neighbor_links"].extend(
-                resolve_fabric_neighbors(
-                    fabric_node_id,
-                    neighbors,
-                    peer_index.get(fabric, {}),
-                ),
-            )
-            fabric_node["routes"] = format_fabric_routes(
-                get_node_fabric_routes(proxmox_client, node_name, fabric),
-            )
-            state["interface_links"].extend(
-                transform_fabric_interfaces(
-                    fabric_node_raw,
-                    fabric_node_id,
-                    get_node_fabric_interfaces(proxmox_client, node_name, fabric),
+            try:
+                fabric_state = _read_fabric_state(
+                    proxmox_client,
                     cluster_id,
-                ),
+                    fabric_node_raw,
+                    fabric_nodes_by_id[fabric_node_id],
+                    peer_index.get(fabric, {}),
+                )
+            except NodeStateUnavailable as e:
+                logger.warning(
+                    "Could not read SDN fabric %s of node %s from %s, keeping its "
+                    "last known state: %s",
+                    fabric,
+                    node_name,
+                    e.endpoint,
+                    e.error,
+                )
+                failed_fabric_nodes.add(fabric_node_id)
+                continue
+            for key, items in fabric_state.items():
+                state[key].extend(items)
+
+    return state, failed_zones, failed_fabric_nodes
+
+
+def _read_graph(neo4j_session: neo4j.Session, query: str, **kwargs: Any) -> list:
+    return neo4j_session.execute_read(read_list_of_dicts_tx, query, **kwargs)
+
+
+def keep_last_known_node_state(
+    neo4j_session: neo4j.Session,
+    cluster_id: str,
+    state: dict[str, list[dict[str, Any]]],
+    failed_zones: set[tuple[str, str | None]],
+    failed_fabric_nodes: set[str],
+    fabric_nodes: list[dict[str, Any]],
+) -> None:
+    """
+    Add to the node state what the graph holds for the scopes that failed.
+
+    The cleanup removes the per-node state that this sync does not load, so
+    without this a node whose FRR answers an error would lose its zone and VNet
+    deployments, bridges and fabric state until it answers again. Reloading the
+    last known state keeps it, and the cleanup still removes stale state of the
+    nodes that answered. Only reads the graph; the writes go through load().
+
+    :param neo4j_session: Neo4j session
+    :param cluster_id: Parent cluster ID
+    :param state: Node state from _sync_node_state, extended in place
+    :param failed_zones: (node name, zone name or None for all zones) pairs
+    :param failed_fabric_nodes: IDs of fabric nodes whose state failed
+    :param fabric_nodes: Transformed fabric nodes, whose neighbors and routes
+        are filled in place for the failed ones
+    """
+    for node_name, zone in sorted(failed_zones, key=lambda f: (f[0], f[1] or "")):
+        node_id = cluster_scoped_id(cluster_id, node_name)
+        state["zone_links"].extend(
+            _read_graph(
+                neo4j_session,
+                """
+                MATCH (z:ProxmoxSDNZone)-[r:DEPLOYED_ON]->(:ProxmoxNode {id: $node_id})
+                WHERE $zone IS NULL OR z.name = $zone
+                RETURN z.id AS zone_id, $node_id AS node_id,
+                       r.status AS status, r.ip_vrf AS ip_vrf
+                """,
+                node_id=node_id,
+                zone=zone,
+            ),
+        )
+        state["vnet_links"].extend(
+            _read_graph(
+                neo4j_session,
+                """
+                MATCH (v:ProxmoxSDNVNet)-[r:DEPLOYED_ON]->(:ProxmoxNode {id: $node_id})
+                WHERE $zone IS NULL OR v.zone = $zone
+                RETURN v.id AS vnet_id, $node_id AS node_id, r.status AS status,
+                       r.statusmsg AS statusmsg, r.mac_vrf AS mac_vrf
+                """,
+                node_id=node_id,
+                zone=zone,
+            ),
+        )
+        for row in _read_graph(
+            neo4j_session,
+            """
+            MATCH (:ProxmoxNode {id: $node_id})-[:HAS_SDN_BRIDGE]->(b:ProxmoxSDNBridge)
+            WHERE $zone IS NULL OR b.zone = $zone
+            OPTIONAL MATCH (b)-[:HAS_PORT]->(p:ProxmoxSDNBridgePort)
+            RETURN properties(b) AS bridge, collect(properties(p)) AS ports
+            """,
+            node_id=node_id,
+            zone=zone,
+        ):
+            bridge = row["bridge"]
+            state["bridges"].append(
+                {
+                    **bridge,
+                    "node_id": node_id,
+                    "vnet_id": cluster_scoped_id(cluster_id, bridge["name"]),
+                },
+            )
+            state["ports"].extend(
+                {
+                    **port,
+                    "bridge_id": bridge["id"],
+                    "net_id": (
+                        None if port.get("index") is None else f"net{port['index']}"
+                    ),
+                }
+                for port in row["ports"]
             )
 
-    return state
+    fabric_nodes_by_id = {fn["id"]: fn for fn in fabric_nodes}
+    for fabric_node_id in sorted(failed_fabric_nodes):
+        previous = _read_graph(
+            neo4j_session,
+            """
+            MATCH (f:ProxmoxSDNFabricNode {id: $id})
+            RETURN f.neighbors AS neighbors, f.routes AS routes
+            """,
+            id=fabric_node_id,
+        )
+        if previous:
+            fabric_nodes_by_id[fabric_node_id]["neighbors"] = previous[0]["neighbors"]
+            fabric_nodes_by_id[fabric_node_id]["routes"] = previous[0]["routes"]
+        state["neighbor_links"].extend(
+            _read_graph(
+                neo4j_session,
+                """
+                MATCH (:ProxmoxSDNFabricNode {id: $id})-[r:FABRIC_NEIGHBOR]->(b:ProxmoxSDNFabricNode)
+                RETURN $id AS fabric_node_id, b.id AS neighbor_id,
+                       r.status AS status, r.uptime AS uptime
+                """,
+                id=fabric_node_id,
+            ),
+        )
+        state["interface_links"].extend(
+            _read_graph(
+                neo4j_session,
+                """
+                MATCH (:ProxmoxSDNFabricNode {id: $id})-[r:USES_INTERFACE]->(i:ProxmoxNodeNetworkInterface)
+                RETURN $id AS fabric_node_id, i.id AS interface_id, r.ip AS ip,
+                       r.ip6 AS ip6, r.state AS state, r.type AS type
+                """,
+                id=fabric_node_id,
+            ),
+        )
 
 
 @timeit
@@ -1436,12 +1745,20 @@ def sync(
     )
 
     # GET and TRANSFORM - per-node state
-    node_state = _sync_node_state(
+    node_state, failed_zones, failed_fabric_nodes = _sync_node_state(
         proxmox_client,
         cluster_id,
         zones,
         vnets,
         fabric_nodes_raw,
+        fabric_nodes,
+    )
+    keep_last_known_node_state(
+        neo4j_session,
+        cluster_id,
+        node_state,
+        failed_zones,
+        failed_fabric_nodes,
         fabric_nodes,
     )
 

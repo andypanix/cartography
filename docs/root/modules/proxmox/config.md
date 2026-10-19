@@ -31,6 +31,8 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 
 Cartography reads only the running SDN configuration, so changes not applied yet in **Datacenter** > **SDN** are not ingested. A cluster without SDN, or a host without the `libpve-network-perl` package, syncs no SDN data. Fabrics, prefix lists, route maps, VNet bridges, fabric status and EVPN VRF tables exist only on Proxmox VE 9 and are skipped on 8.4.
 
+Cartography reads the SDN state only from online nodes. An offline node loses its SDN deployment links, bridges and fabric state until it is back online. When an online node answers an error for a zone or a fabric, for example an HTTP 500 from FRR, Cartography logs a warning, keeps the last known state of that zone or fabric on that node, and goes on with the other zones, fabrics and nodes. Errors reading the cluster SDN configuration still stop the SDN sync.
+
 ## Optional Permissions
 
 `--proxmox-enable-guest-agent` queries the QEMU guest agent of running VMs. This needs `VM.Monitor` on Proxmox VE 8, or `VM.GuestAgent.Audit` on Proxmox VE 9, which `PVEAuditor` does not include. Without it, Cartography logs the failure and syncs the VMs without guest agent data.

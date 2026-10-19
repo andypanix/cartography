@@ -3,7 +3,10 @@ Unit tests for Proxmox SDN transforms.
 """
 
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
+import pytest
+import requests
 from proxmoxer.core import ResourceException
 
 from cartography.intel.proxmox import sdn
@@ -140,6 +143,21 @@ def test_transform_ipam_entries_skips_entries_without_ip():
         "10.10.0.1": None,
         "10.10.0.100": 100,
     }
+
+
+def test_transform_ipam_entries_ignores_unexpected_shapes():
+    # Act
+    entries = sdn.transform_ipam_entries(
+        {
+            "broken": {"ip": "10.0.0.1"},
+            "pve": ["10.0.0.2", *data.MOCK_IPAM_STATUS["pve"]],
+        },
+        C,
+    )
+
+    # Assert
+    assert {e["ipam"] for e in entries} == {"pve"}
+    assert len(entries) == 2
 
 
 def test_transform_prefix_lists_orders_entries_by_sequence():
@@ -363,3 +381,131 @@ def test_version_9_getters_return_empty_on_proxmox_8():
     # Act and assert
     assert sdn.get_fabrics(client) == {}
     assert sdn.get_node_zone_bridges(client, "pve1", "zone1") == []
+
+
+def _frr_error() -> ResourceException:
+    return ResourceException(500, "Internal Server Error", "FRR not responding")
+
+
+def _node_state_getters(**overrides):
+    getters = {
+        "get_nodes": lambda client: data.MOCK_NODES,
+        "get_node_zones": lambda client, node: data.MOCK_NODE_ZONES.get(node, []),
+        "get_node_zone_content": lambda client, node, zone: data.MOCK_NODE_ZONE_CONTENT.get(
+            (node, zone), []
+        ),
+        "get_node_zone_bridges": lambda client, node, zone: data.MOCK_NODE_ZONE_BRIDGES.get(
+            (node, zone), []
+        ),
+        "get_node_zone_ip_vrf": lambda client, node, zone: data.MOCK_NODE_ZONE_IP_VRF.get(
+            (node, zone), []
+        ),
+        "get_node_vnet_mac_vrf": lambda client, node, vnet: data.MOCK_NODE_VNET_MAC_VRF.get(
+            (node, vnet), []
+        ),
+        "get_node_fabric_interfaces": lambda client, node, fabric: data.MOCK_NODE_FABRIC_INTERFACES.get(
+            (node, fabric), []
+        ),
+        "get_node_fabric_neighbors": lambda client, node, fabric: data.MOCK_NODE_FABRIC_NEIGHBORS.get(
+            (node, fabric), []
+        ),
+        "get_node_fabric_routes": lambda client, node, fabric: data.MOCK_NODE_FABRIC_ROUTES.get(
+            (node, fabric), []
+        ),
+    }
+    getters.update(overrides)
+    return getters
+
+
+def _run_node_state(getters):
+    fabric_nodes = sdn.transform_fabric_nodes(data.MOCK_FABRICS["nodes"], C)
+    with patch.multiple(
+        sdn, **{k: MagicMock(side_effect=v) for k, v in getters.items()}
+    ):
+        state, failed_zones, failed_fabric_nodes = sdn._sync_node_state(
+            None,
+            C,
+            data.MOCK_ZONES,
+            data.MOCK_VNETS,
+            data.MOCK_FABRICS["nodes"],
+            fabric_nodes,
+        )
+    return state, failed_zones, failed_fabric_nodes, fabric_nodes
+
+
+def _raise_for(name, node_name, error):
+    default = _node_state_getters()[name]
+
+    def getter(client, node, *args):
+        if node == node_name:
+            raise error
+        return default(client, node, *args)
+
+    return getter
+
+
+def test_node_state_skips_a_node_whose_zones_fail(caplog):
+    # Arrange
+    def node_zones(client, node):
+        if node == "pve1":
+            raise _frr_error()
+        return data.MOCK_NODE_ZONES.get(node, [])
+
+    # Act
+    state, failed_zones, failed_fabric_nodes, _ = _run_node_state(
+        _node_state_getters(get_node_zones=node_zones),
+    )
+
+    # Assert - pve2 is still read, pve1 is reported as failed
+    assert failed_zones == {("pve1", None)}
+    assert failed_fabric_nodes == set()
+    assert {(link["zone_id"], link["node_id"]) for link in state["zone_links"]} == {
+        ("prod/vlan1", "prod/pve2"),
+    }
+    assert state["bridges"] == []
+    assert "/nodes/{node}/sdn/zones" in caplog.text
+    assert "pve1" in caplog.text
+
+
+def test_node_state_skips_only_the_failing_zone_and_fabric():
+    # Arrange
+    getters = _node_state_getters(
+        get_node_zone_ip_vrf=_raise_for("get_node_zone_ip_vrf", "pve1", _frr_error()),
+        get_node_fabric_routes=_raise_for(
+            "get_node_fabric_routes",
+            "pve2",
+            requests.exceptions.ReadTimeout("timed out"),
+        ),
+    )
+
+    # Act
+    state, failed_zones, failed_fabric_nodes, fabric_nodes = _run_node_state(getters)
+
+    # Assert - the EVPN zone of pve1 and the fabric state of pve2 fail alone
+    assert failed_zones == {("pve1", "evpn1")}
+    assert failed_fabric_nodes == {"prod/fab1:pve2"}
+    assert {(link["zone_id"], link["node_id"]) for link in state["zone_links"]} == {
+        ("prod/vlan1", "prod/pve1"),
+        ("prod/vlan1", "prod/pve2"),
+    }
+    assert {link["vnet_id"] for link in state["vnet_links"]} == {"prod/vlan10"}
+    assert state["bridges"] == []
+    assert {link["fabric_node_id"] for link in state["neighbor_links"]} == {
+        "prod/fab1:pve1",
+    }
+    assert {link["fabric_node_id"] for link in state["interface_links"]} == {
+        "prod/fab1:pve1",
+    }
+    by_id = {fn["id"]: fn for fn in fabric_nodes}
+    assert by_id["prod/fab1:pve1"]["routes"] == ["192.0.2.2/32 via 198.51.100.2"]
+    assert by_id["prod/fab1:pve2"]["routes"] == []
+
+
+def test_node_state_propagates_errors_listing_the_nodes():
+    # Arrange
+    def nodes(client):
+        raise _frr_error()
+
+    # Act and assert
+    with pytest.raises(ResourceException):
+        _run_node_state(_node_state_getters(get_nodes=nodes))
