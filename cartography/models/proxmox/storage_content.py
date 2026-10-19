@@ -59,6 +59,10 @@ class ProxmoxBackupArchiveNodeProperties(CartographyNodeProperties):
         "ctime",
         description="Creation time of the archive, in seconds since the UNIX epoch.",
     )
+    last_listed: PropertyRef = PropertyRef(
+        "last_listed",
+        description="When the archive was last seen in a storage content listing, in seconds since the UNIX epoch. Content of a storage that was not read in a sync is kept with this value unchanged.",
+    )
     notes: PropertyRef = PropertyRef(
         "notes",
         description="First line of the archive notes.",
@@ -213,6 +217,10 @@ class ProxmoxStorageTemplateNodeProperties(CartographyNodeProperties):
     ctime: PropertyRef = PropertyRef(
         "ctime",
         description="Creation time of the file, in seconds since the UNIX epoch.",
+    )
+    last_listed: PropertyRef = PropertyRef(
+        "last_listed",
+        description="When the file was last seen in a storage content listing, in seconds since the UNIX epoch. Content of a storage that was not read in a sync is kept with this value unchanged.",
     )
 
 
