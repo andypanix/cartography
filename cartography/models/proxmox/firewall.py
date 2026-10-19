@@ -27,7 +27,10 @@ class ProxmoxFirewallRuleNodeProperties(CartographyNodeProperties):
     )
     scope: PropertyRef = PropertyRef(
         "scope",
-        description="Level where the rule is defined: cluster, node, or vm.",
+        description=(
+            "Level where the rule is defined: cluster, node, or vm. Rules of "
+            "QEMU VMs and LXC containers both use vm."
+        ),
     )
     scope_id: PropertyRef = PropertyRef(
         "scope_id",

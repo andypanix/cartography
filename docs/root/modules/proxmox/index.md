@@ -6,14 +6,14 @@ Proxmox names such as node `pve`, storage `local`, or user `root@pam` are only u
 
 The module ingests:
 
-- **Cluster topology**: cluster settings, nodes, and node network interfaces.
+- **Cluster topology**: cluster settings, nodes, and node network interfaces. On a cluster, also the Corosync totem settings, the QDevice status, and each node's Corosync ID, votes, and link addresses. A standalone host has no Corosync configuration, so these properties stay empty.
 - **Compute**: QEMU virtual machines and LXC containers, with their disks and network interfaces. Guest agent data (OS, hostname, guest IP addresses) is optional.
 - **Storage**: storage backends and the nodes where they are available.
 - **Resource pools**: pools and the VMs and storage they contain.
 - **Backup jobs**: scheduled vzdump jobs, their target storage, and the guests they back up.
 - **High availability**: HA groups and HA-managed resources.
 - **Access control**: users, groups, roles, and ACLs, with the resources each ACL applies to.
-- **Firewall**: cluster, node, and guest firewall rules, and cluster IP sets.
+- **Firewall**: cluster and node firewall rules, rules of QEMU VMs and LXC containers, and cluster IP sets.
 - **Certificates**: TLS certificates installed on each node.
 
 ```{toctree}

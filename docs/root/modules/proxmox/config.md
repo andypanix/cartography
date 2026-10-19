@@ -23,8 +23,8 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 
 | Privilege | Used for |
 | --- | --- |
-| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall |
-| `VM.Audit` | VM and container configuration, guest firewall rules, backup jobs |
+| `Sys.Audit` | Cluster status and options, Corosync configuration and QDevice status, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall |
+| `VM.Audit` | VM and container configuration, VM and container firewall rules, backup jobs |
 | `Datastore.Audit` | Storage backends |
 | `Pool.Audit` | Resource pools |
 

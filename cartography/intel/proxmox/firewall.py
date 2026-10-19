@@ -10,6 +10,8 @@ from typing import Any
 import neo4j
 
 from cartography.client.core.tx import load
+from cartography.intel.proxmox import cluster
+from cartography.intel.proxmox import compute
 from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.intel.proxmox.util import proxmox_api_retry
 from cartography.models.proxmox.firewall import ProxmoxFirewallIPSetSchema
@@ -68,6 +70,23 @@ def get_vm_firewall_rules(
     :raises: Exception if API call fails
     """
     return proxmox_client.nodes(node_name).qemu(vmid).firewall.rules.get()
+
+
+@timeit
+@proxmox_api_retry
+def get_container_firewall_rules(
+    proxmox_client: Any, node_name: str, vmid: int
+) -> list[dict[str, Any]]:
+    """
+    Get LXC container-level firewall rules.
+
+    :param proxmox_client: Proxmox API client
+    :param node_name: Node name
+    :param vmid: Container ID
+    :return: List of firewall rule dicts
+    :raises: Exception if API call fails
+    """
+    return proxmox_client.nodes(node_name).lxc(vmid).firewall.rules.get()
 
 
 @timeit
@@ -320,8 +339,8 @@ def sync(
     )
     all_ipsets.extend(transformed_ipsets)
 
-    # GET - Node-level firewall rules
-    nodes = proxmox_client.nodes.get()
+    # GET - Node-level and guest-level firewall rules
+    nodes = cluster.get_nodes(proxmox_client)
     for node in nodes:
         node_name = node["node"]
         node_rules = get_node_firewall_rules(proxmox_client, node_name)
@@ -330,9 +349,25 @@ def sync(
         )
         all_rules.extend(transformed_node_rules)
 
-    # GET - VM-level firewall rules (sample only to avoid excessive API calls)
-    # In production, you might want to limit this or make it configurable
-    logger.debug("Skipping VM-level firewall rules to avoid excessive API calls")
+        # VM IDs are unique across QEMU VMs and LXC containers of a cluster,
+        # so rules of both guest types share the vm scope and attach to the
+        # ProxmoxVM with that vmid.
+        for vm in compute.get_vms_for_node(proxmox_client, node_name):
+            vm_rules = get_vm_firewall_rules(proxmox_client, node_name, vm["vmid"])
+            all_rules.extend(
+                transform_firewall_rule_data(
+                    vm_rules, cluster_id, "vm", str(vm["vmid"])
+                )
+            )
+        for ct in compute.get_containers_for_node(proxmox_client, node_name):
+            ct_rules = get_container_firewall_rules(
+                proxmox_client, node_name, ct["vmid"]
+            )
+            all_rules.extend(
+                transform_firewall_rule_data(
+                    ct_rules, cluster_id, "vm", str(ct["vmid"])
+                )
+            )
 
     # LOAD - ingest to Neo4j
     load_firewall_rules(neo4j_session, all_rules, cluster_id, update_tag)

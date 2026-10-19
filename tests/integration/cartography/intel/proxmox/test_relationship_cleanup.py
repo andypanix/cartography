@@ -25,9 +25,10 @@ from tests.data.proxmox.access import MOCK_GROUP_MEMBERS_DATA
 from tests.data.proxmox.access import MOCK_ROLE_DATA
 from tests.data.proxmox.access import MOCK_USER_DATA
 from tests.data.proxmox.backup import MOCK_BACKUP_JOB_DATA
-from tests.data.proxmox.cluster import MOCK_CLUSTER_CONFIG
 from tests.data.proxmox.cluster import MOCK_CLUSTER_DATA
 from tests.data.proxmox.cluster import MOCK_CLUSTER_OPTIONS
+from tests.data.proxmox.cluster import MOCK_COROSYNC_NODES
+from tests.data.proxmox.cluster import MOCK_COROSYNC_TOTEM
 from tests.data.proxmox.cluster import MOCK_NODE_DATA
 from tests.data.proxmox.cluster import MOCK_NODE_NETWORK_DATA
 from tests.data.proxmox.compute import MOCK_STORAGE_DATA
@@ -114,8 +115,16 @@ def _run_ingestion(
         ),
         patch.object(
             cartography.intel.proxmox.cluster,
-            "get_cluster_config",
-            return_value=MOCK_CLUSTER_CONFIG,
+            "get_corosync_totem",
+            return_value=MOCK_COROSYNC_TOTEM,
+        ),
+        patch.object(
+            cartography.intel.proxmox.cluster,
+            "get_corosync_nodes",
+            return_value=MOCK_COROSYNC_NODES,
+        ),
+        patch.object(
+            cartography.intel.proxmox.cluster, "get_qdevice_status", return_value={}
         ),
         patch.object(
             cartography.intel.proxmox.cluster,
@@ -201,6 +210,16 @@ def _run_ingestion(
         patch.object(
             cartography.intel.proxmox.firewall,
             "get_node_firewall_rules",
+            return_value=[],
+        ),
+        patch.object(
+            cartography.intel.proxmox.firewall,
+            "get_vm_firewall_rules",
+            return_value=[],
+        ),
+        patch.object(
+            cartography.intel.proxmox.firewall,
+            "get_container_firewall_rules",
             return_value=[],
         ),
         patch.object(

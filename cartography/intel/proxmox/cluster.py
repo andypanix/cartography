@@ -98,42 +98,44 @@ def get_cluster_options(proxmox_client: Any) -> Dict[str, Any]:
 
 @timeit
 @proxmox_api_retry
-def get_cluster_resources(proxmox_client: Any) -> List[Dict[str, Any]]:
+def get_corosync_totem(proxmox_client: Any) -> Dict[str, Any] | None:
     """
-    Get cluster resource summary.
+    Get the corosync totem protocol settings.
+
+    A host that is not part of a cluster has no corosync.conf and answers
+    with null instead of an error.
 
     :param proxmox_client: Proxmox API client
-    :return: List of resource dicts
+    :return: Totem section of corosync.conf, or None on a standalone host
     :raises: Exception if API call fails
     """
-    return proxmox_client.cluster.resources.get()
+    return proxmox_client.cluster.config.totem.get()
 
 
 @timeit
 @proxmox_api_retry
-def get_cluster_config(proxmox_client: Any) -> Any:
+def get_corosync_nodes(proxmox_client: Any) -> List[Dict[str, Any]]:
     """
-    Get cluster configuration including corosync info.
+    Get the corosync node list.
 
     :param proxmox_client: Proxmox API client
-    :return: Cluster config (can be dict or list depending on API response)
+    :return: Node entries of corosync.conf, empty on a standalone host
     :raises: Exception if API call fails
     """
-    # Get corosync configuration
-    return proxmox_client.cluster.config.get()
+    return proxmox_client.cluster.config.nodes.get()
 
 
 @timeit
 @proxmox_api_retry
-def get_replication_jobs(proxmox_client: Any) -> List[Dict[str, Any]]:
+def get_qdevice_status(proxmox_client: Any) -> Dict[str, Any]:
     """
-    Get cluster replication jobs.
+    Get the status of the corosync QDevice.
 
     :param proxmox_client: Proxmox API client
-    :return: List of replication job dicts
+    :return: QDevice status fields, empty when no QDevice is configured
     :raises: Exception if API call fails
     """
-    return proxmox_client.cluster.replication.get()
+    return proxmox_client.cluster.config.qdevice.get()
 
 
 # ============================================================================
@@ -244,54 +246,109 @@ def transform_cluster_options(cluster_options: Dict[str, Any]) -> Dict[str, Any]
     }
 
 
-def transform_cluster_config(cluster_config: Any) -> Dict[str, Any]:
+def _to_int(value: Any) -> Any:
     """
-    Transform cluster configuration (corosync) into metadata fields.
+    Convert a numeric corosync.conf value to int.
 
-    :param cluster_config: Raw cluster config from API (can be list or dict)
-    :return: Dict of transformed cluster config fields
+    corosync.conf values reach the API as strings; values that are not
+    plain integers are returned unchanged.
     """
-    if not cluster_config:
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return value
+
+
+def transform_corosync_totem(totem: Dict[str, Any] | None) -> Dict[str, Any]:
+    """
+    Transform the corosync totem settings into cluster properties.
+
+    :param totem: Totem section from /cluster/config/totem, None when not clustered
+    :return: Dict of totem_* cluster fields, empty when there is no totem section
+    """
+    if not totem:
         return {}
 
-    # Proxmox API may return a list - if so, convert to dict
-    # The list typically contains configuration section dictionaries
-    config_dict = {}
-    if isinstance(cluster_config, list):
-        # Convert list of config sections to a dict
-        for item in cluster_config:
-            if isinstance(item, dict) and "section" in item:
-                section_name = item.get("section")
-                config_dict[section_name] = item
-        # If we have a totem section, use it directly
-        cluster_config = config_dict
-
-    totem = cluster_config.get("totem", {})
+    # Proxmox keys the interface sections by link number (ring number on
+    # configurations written before corosync 3).
+    interfaces = totem.get("interface") or {}
+    link_numbers = sorted(_to_int(k) for k in interfaces) if interfaces else None
 
     return {
-        # Corosync/Totem configuration
-        "totem_interface": totem.get("interface"),
         "totem_cluster_name": totem.get("cluster_name"),
-        "totem_config_version": totem.get("config_version"),
+        "totem_config_version": _to_int(totem.get("config_version")),
         "totem_ip_version": totem.get("ip_version"),
+        "totem_link_mode": totem.get("link_mode"),
+        "totem_link_numbers": link_numbers,
         "totem_secauth": totem.get("secauth"),
-        "totem_version": totem.get("version"),
+        "totem_version": _to_int(totem.get("version")),
     }
 
 
+def transform_qdevice_status(qdevice: Dict[str, Any] | None) -> Dict[str, Any]:
+    """
+    Transform the QDevice status into cluster properties.
+
+    :param qdevice: Status from /cluster/config/qdevice, empty when no QDevice runs
+    :return: Dict of qdevice_* cluster fields, empty when there is no QDevice
+    """
+    if not qdevice:
+        return {}
+
+    return {
+        "qdevice_state": qdevice.get("State"),
+        "qdevice_model": qdevice.get("Model"),
+        "qdevice_qnetd_host": qdevice.get("QNetd host"),
+        "qdevice_algorithm": qdevice.get("Algorithm"),
+        "qdevice_tie_breaker": qdevice.get("Tie-breaker"),
+    }
+
+
+def transform_corosync_nodes(
+    corosync_nodes: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Transform the corosync node list into node fields keyed by node name.
+
+    :param corosync_nodes: Entries from /cluster/config/nodes
+    :return: Map of node name to corosync_* node fields
+    """
+    result: Dict[str, Dict[str, Any]] = {}
+    for entry in corosync_nodes:
+        # The API sets "node" to the name, or to ring0_addr when the entry has no name.
+        node_name = entry["node"]
+        rings = sorted(
+            (int(key[len("ring") : -len("_addr")]), value)
+            for key, value in entry.items()
+            if key.startswith("ring")
+            and key.endswith("_addr")
+            and key[len("ring") : -len("_addr")].isdigit()
+        )
+        result[node_name] = {
+            "corosync_node_id": _to_int(entry.get("nodeid")),
+            "corosync_quorum_votes": _to_int(entry.get("quorum_votes")),
+            "corosync_ring_addresses": [addr for _, addr in rings] or None,
+        }
+    return result
+
+
 def transform_node_data(
-    nodes: List[Dict[str, Any]], cluster_id: str
+    nodes: List[Dict[str, Any]],
+    cluster_id: str,
+    corosync_nodes: Dict[str, Dict[str, Any]] | None = None,
 ) -> List[Dict[str, Any]]:
     """
     Transform node data into standard format.
 
     :param nodes: Raw node data from API
     :param cluster_id: Parent cluster ID
+    :param corosync_nodes: corosync_* fields keyed by node name, from transform_corosync_nodes
     :return: List of transformed node dicts
     """
     transformed_nodes = []
+    corosync_nodes = corosync_nodes or {}
 
     for node in nodes:
+        corosync = corosync_nodes.get(node["node"], {})
         # Use direct access for required fields, .get() for optional
         transformed_nodes.append(
             {
@@ -330,6 +387,10 @@ def transform_node_data(
                 "pveversion": node.get("pveversion"),  # PVE version string
                 "cpuinfo": node.get("cpuinfo"),  # CPU model
                 "idle": node.get("idle"),  # Idle percentage
+                # Corosync membership, empty on a standalone host
+                "corosync_node_id": corosync.get("corosync_node_id"),
+                "corosync_quorum_votes": corosync.get("corosync_quorum_votes"),
+                "corosync_ring_addresses": corosync.get("corosync_ring_addresses"),
             }
         )
 
@@ -496,16 +557,33 @@ def sync(
     cluster_status = get_cluster_status(proxmox_client)
     nodes = get_nodes(proxmox_client)
     cluster_options = get_cluster_options(proxmox_client)
-    cluster_config = get_cluster_config(proxmox_client)
+    # A standalone host has no corosync.conf: the totem endpoint answers null.
+    totem = get_corosync_totem(proxmox_client)
+    if totem:
+        corosync_nodes = get_corosync_nodes(proxmox_client)
+        qdevice = get_qdevice_status(proxmox_client)
+    else:
+        logger.info(
+            "Proxmox host %s is not clustered (no corosync configuration), "
+            "skipping corosync settings",
+            proxmox_host,
+        )
+        corosync_nodes = []
+        qdevice = {}
 
     # TRANSFORM - manipulate data for ingestion
     cluster_data = transform_cluster_data(cluster_status, proxmox_host)
 
     # Merge additional cluster metadata
     cluster_data.update(transform_cluster_options(cluster_options))
-    cluster_data.update(transform_cluster_config(cluster_config))
+    cluster_data.update(transform_corosync_totem(totem))
+    cluster_data.update(transform_qdevice_status(qdevice))
 
-    transformed_nodes = transform_node_data(nodes, cluster_data["id"])
+    transformed_nodes = transform_node_data(
+        nodes,
+        cluster_data["id"],
+        transform_corosync_nodes(corosync_nodes),
+    )
 
     # LOAD - ingest to Neo4j
     load_cluster(neo4j_session, cluster_data, update_tag)
