@@ -23,7 +23,7 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 
 | Privilege | Used for |
 | --- | --- |
-| `Sys.Audit` | Cluster status and options, Corosync configuration and QDevice status, nodes, node networks, certificates, users, API tokens, second factors, realms, realm sync jobs, groups, roles, ACLs, HA groups, resources, rules and status, cluster and node firewall (rules, options, security groups, aliases, IP sets), metric servers |
+| `Sys.Audit` | Cluster status and options, Corosync configuration and QDevice status, nodes, node networks, certificates, users, API tokens, second factors, realms, realm sync jobs, groups, roles, ACLs, HA groups, resources, rules and status, cluster and node firewall (rules, options, security groups, aliases, IP sets), metric servers, node disks, SMART data, ZFS, LVM, managed directories, package versions, APT repositories, node options, DNS, time, services, PCI devices and mediated device types |
 | `VM.Audit` | VM and container configuration, snapshots, cloud-init values, container IP addresses, VM and container firewall (rules, options, aliases, IP sets), backup jobs |
 | `Datastore.Audit` | Storage backends |
 | `Pool.Audit` | Resource pools, including nested pools. Cartography lists only the pools where the user has `Pool.Audit`. |
@@ -52,6 +52,10 @@ The ACME account list is open to every user, but the account details (`/cluster/
 `PVEAuditor` cannot call `/access/users/{userid}/token` for other users: that endpoint requires `User.Modify`. Cartography does not call it and reads the same token fields (`tokenid`, `comment`, `expire`, `privsep`) from `/access/users?full=1`, which `Sys.Audit` covers.
 
 Cartography never reads secrets: the API returns no token secrets, TOTP secrets or recovery codes, and Cartography keeps only an allowlist of realm settings, so the LDAP bind password and the OpenID client key are never stored.
+
+The node details need `Sys.Audit` on `/`, or on `/nodes/{node}` for the disk list, package versions, APT repositories, DNS, time and services. The PCI device and mediated device type endpoints accept either `Sys.Audit` or `Sys.Modify`, so `Sys.Audit` is enough. The subscription endpoint is readable by any user, but Proxmox returns the subscription key only with `Sys.Audit`. The privileges are the same on Proxmox VE 8.4 and 9. Cartography never calls `/nodes/{node}/apt/update`, which needs `Sys.Modify`.
+
+For each online node, the node details sync makes 14 API calls, plus one per local disk (SMART data), one per ZFS pool (pool details) and one per PCI device that supports mediated devices.
 
 ## Optional Permissions
 

@@ -16,6 +16,7 @@ import cartography.intel.proxmox.cluster
 import cartography.intel.proxmox.compute
 import cartography.intel.proxmox.firewall
 import cartography.intel.proxmox.ha
+import cartography.intel.proxmox.node_details
 import cartography.intel.proxmox.pool
 import cartography.intel.proxmox.storage
 from cartography.config import Config
@@ -99,6 +100,8 @@ def _run_ingestion(
         patch.object(
             cartography.intel.proxmox, "_get_proxmox_client", return_value=proxmox
         ),
+        # Node details are covered by test_node_details.py
+        patch.object(cartography.intel.proxmox.node_details, "sync"),
         # Cluster and compute
         patch.object(
             cartography.intel.proxmox.cluster,

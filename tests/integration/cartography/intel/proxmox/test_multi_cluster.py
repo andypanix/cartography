@@ -21,6 +21,7 @@ import cartography.intel.proxmox.guests
 import cartography.intel.proxmox.ha
 import cartography.intel.proxmox.integrations
 import cartography.intel.proxmox.mapping
+import cartography.intel.proxmox.node_details
 import cartography.intel.proxmox.pool
 import cartography.intel.proxmox.storage
 from cartography.config import Config
@@ -67,6 +68,17 @@ SCOPED_IDS = {
     "ProxmoxNotificationMatcher": "default-matcher",
     "ProxmoxMetricServer": "influx",
     "ProxmoxACMEAccount": "default",
+    "ProxmoxPhysicalDisk": "pve:/dev/sda",
+    "ProxmoxZFSPool": "pve:zfs:rpool",
+    "ProxmoxLVMVolumeGroup": "pve:lvm:pve",
+    "ProxmoxLVMThinPool": "pve:lvmthin:pve/data",
+    "ProxmoxManagedDirectory": "pve:directory:/mnt/pve/backup",
+    "ProxmoxPackage": "pve:package:pve-manager",
+    "ProxmoxAPTRepository": "pve:apt:/etc/apt/sources.list:0",
+    "ProxmoxSubscription": "pve:subscription",
+    "ProxmoxNodeConfig": "pve:config",
+    "ProxmoxService": "pve:service:pveproxy",
+    "ProxmoxPCIDevice": "pve:pci:0000:01:00.0",
 }
 
 
@@ -291,6 +303,57 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
         ),
         (integrations, "get_acme_accounts", [{"name": "default"}]),
         (integrations, "get_acme_account", {"directory": "https://acme.example"}),
+        *_node_details_api_data(cluster_id),
+    ]
+
+
+def _node_details_api_data(cluster_id: str) -> list[tuple[Any, str, Any]]:
+    """Mocked node detail responses; disk, pool and device names match across clusters."""
+    details = cartography.intel.proxmox.node_details
+    return [
+        (details, "get_node_disks", [{"devpath": "/dev/sda", "serial": cluster_id}]),
+        (details, "get_disk_smart", {"health": "PASSED"}),
+        (details, "get_zfs_pools", [{"name": "rpool"}]),
+        (
+            details,
+            "get_zfs_pool_details",
+            {"children": [{"name": "rpool", "children": [{"name": "sda3"}]}]},
+        ),
+        (
+            details,
+            "get_lvm_volume_groups",
+            {"children": [{"name": "pve", "children": [{"name": "/dev/sda2"}]}]},
+        ),
+        (details, "get_lvm_thin_pools", [{"lv": "data", "vg": "pve"}]),
+        (
+            details,
+            "get_managed_directories",
+            [{"path": "/mnt/pve/backup", "device": "/dev/sda4"}],
+        ),
+        (
+            details,
+            "get_package_versions",
+            [{"Package": "pve-manager", "Version": "9.0.10"}],
+        ),
+        (
+            details,
+            "get_apt_repositories",
+            {
+                "files": [
+                    {
+                        "path": "/etc/apt/sources.list",
+                        "repositories": [{"Enabled": True}],
+                    },
+                ],
+            },
+        ),
+        (details, "get_subscription", {"status": "notfound"}),
+        (details, "get_node_config", {}),
+        (details, "get_node_dns", {}),
+        (details, "get_node_time", {"timezone": "UTC"}),
+        (details, "get_node_services", [{"service": "pveproxy", "name": "pveproxy"}]),
+        (details, "get_pci_devices", [{"id": "0000:01:00.0", "mdev": 1}]),
+        (details, "get_pci_mdev_types", [{"type": "nvidia-1", "available": 1}]),
     ]
 
 
@@ -403,6 +466,18 @@ def test_two_clusters_with_identical_names_stay_separate(neo4j_session):
         ("ProxmoxResourceMapping", "AVAILABLE_ON", "ProxmoxNode"),
         ("ProxmoxVM", "USES_MAPPING", "ProxmoxResourceMapping"),
         ("ProxmoxNotificationMatcher", "ROUTES_TO", "ProxmoxNotificationTarget"),
+        ("ProxmoxNode", "HAS_PHYSICAL_DISK", "ProxmoxPhysicalDisk"),
+        ("ProxmoxNode", "HAS_ZFS_POOL", "ProxmoxZFSPool"),
+        ("ProxmoxZFSPool", "USES_DISK", "ProxmoxPhysicalDisk"),
+        ("ProxmoxLVMVolumeGroup", "USES_DISK", "ProxmoxPhysicalDisk"),
+        ("ProxmoxLVMVolumeGroup", "CONTAINS_THIN_POOL", "ProxmoxLVMThinPool"),
+        ("ProxmoxManagedDirectory", "USES_DISK", "ProxmoxPhysicalDisk"),
+        ("ProxmoxNode", "HAS_PACKAGE", "ProxmoxPackage"),
+        ("ProxmoxNode", "HAS_APT_REPOSITORY", "ProxmoxAPTRepository"),
+        ("ProxmoxNode", "HAS_SUBSCRIPTION", "ProxmoxSubscription"),
+        ("ProxmoxNode", "HAS_CONFIG", "ProxmoxNodeConfig"),
+        ("ProxmoxNode", "HAS_SERVICE", "ProxmoxService"),
+        ("ProxmoxNode", "HAS_PCI_DEVICE", "ProxmoxPCIDevice"),
     )
     for source, rel, target in cluster_edges:
         assert check_rels(

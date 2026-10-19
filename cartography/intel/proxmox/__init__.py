@@ -26,6 +26,7 @@ from cartography.intel.proxmox import guests
 from cartography.intel.proxmox import ha
 from cartography.intel.proxmox import integrations
 from cartography.intel.proxmox import mapping
+from cartography.intel.proxmox import node_details
 from cartography.intel.proxmox import pool
 from cartography.intel.proxmox import storage
 from cartography.models.proxmox.access import ProxmoxACLSchema
@@ -243,6 +244,16 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
 
     # Sync notification targets and matchers, metric servers, ACME accounts
     integrations.sync(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+        common_job_parameters,
+    )
+
+    # Sync disks, storage, packages, repositories, subscription and system
+    # settings of each online node; cleans up its own node types.
+    node_details.sync(
         neo4j_session,
         proxmox_client,
         cluster_id,
