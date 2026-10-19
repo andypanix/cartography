@@ -23,10 +23,28 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 
 | Privilege | Used for |
 | --- | --- |
-| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall |
+| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, API tokens, second factors, realms, realm sync jobs, groups, roles, ACLs, HA, firewall |
 | `VM.Audit` | VM and container configuration, guest firewall rules, backup jobs |
 | `Datastore.Audit` | Storage backends |
 | `Pool.Audit` | Resource pools |
+
+### Access control endpoints
+
+`PVEAuditor` on `/` reads all access control data Cartography collects. The table lists the endpoints and the privilege each one checks:
+
+| Endpoint | Privilege | Notes |
+| --- | --- | --- |
+| `/access/users?full=1` | `Sys.Audit` or `User.Modify` on `/access/groups`, or on a group of the user | Users with their groups, API tokens and TFA lock state. Users outside the caller's reach are left out silently. |
+| `/access/tfa` | `Sys.Audit` or `User.Modify` on `/access/groups` | Second factors of every user. Without the privilege the API returns only the caller's own factors. |
+| `/access/domains` | None | Realm list, public for the login screen. |
+| `/access/domains/{realm}` | `Sys.Audit` or `Realm.Allocate` on `/access/realm` | Server and client settings of LDAP, AD and OpenID realms. On a 403, Cartography logs it at info level and loads the realms without these settings. |
+| `/cluster/jobs/realm-sync` | `Sys.Audit` on `/` | Scheduled realm sync jobs. |
+| `/access/groups`, `/access/groups/{groupid}`, `/access/roles` | `Sys.Audit` on `/access` | Groups, group members, roles. |
+| `/access/acl` | `Sys.Audit` on `/access` | All ACL entries, including entries for API tokens. |
+
+`PVEAuditor` cannot call `/access/users/{userid}/token` for other users: that endpoint requires `User.Modify`. Cartography does not call it and reads the same token fields (`tokenid`, `comment`, `expire`, `privsep`) from `/access/users?full=1`, which `Sys.Audit` covers.
+
+Cartography never reads secrets: the API returns no token secrets, TOTP secrets or recovery codes, and Cartography keeps only an allowlist of realm settings, so the LDAP bind password and the OpenID client key are never stored.
 
 ## Optional Permissions
 

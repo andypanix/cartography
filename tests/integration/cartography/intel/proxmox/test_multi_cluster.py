@@ -45,6 +45,10 @@ SCOPED_IDS = {
     "ProxmoxGroup": "admins",
     "ProxmoxRole": "Administrator",
     "ProxmoxACL": "/vms/100:root@pam:Administrator",
+    "ProxmoxRealm": "pam",
+    "ProxmoxRealmSyncJob": "pam-sync",
+    "ProxmoxAPIToken": "root@pam!ci",
+    "ProxmoxTFAFactor": "root@pam/totp-1",
     "ProxmoxFirewallRule": "cluster:0",
     "ProxmoxCertificate": "pve:pveproxy-ssl.pem",
 }
@@ -122,7 +126,30 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
         (
             access,
             "get_users",
-            [{"userid": "root@pam", "email": f"root@{cluster_id}.example.com"}],
+            [
+                {
+                    "userid": "root@pam",
+                    "email": f"root@{cluster_id}.example.com",
+                    "tokens": [{"tokenid": "ci", "privsep": 1}],
+                },
+            ],
+        ),
+        (access, "get_realms", [{"realm": "pam", "type": "pam"}]),
+        (access, "get_realm_details", {}),
+        (
+            access,
+            "get_realm_sync_jobs",
+            [{"id": "pam-sync", "realm": "pam", "enabled": 1, "schedule": "daily"}],
+        ),
+        (
+            access,
+            "get_tfa",
+            [
+                {
+                    "userid": "root@pam",
+                    "entries": [{"id": "totp-1", "type": "totp", "created": 1}],
+                },
+            ],
         ),
         (access, "get_groups", [{"groupid": "admins"}]),
         (access, "get_group_members", {"admins": ["root@pam"]}),
@@ -236,6 +263,10 @@ def test_two_clusters_with_identical_names_stay_separate(neo4j_session):
         ("ProxmoxUser", "MEMBER_OF_GROUP", "ProxmoxGroup"),
         ("ProxmoxACL", "GRANTS_ROLE", "ProxmoxRole"),
         ("ProxmoxACL", "APPLIES_TO_USER", "ProxmoxUser"),
+        ("ProxmoxUser", "IN_REALM", "ProxmoxRealm"),
+        ("ProxmoxRealmSyncJob", "SYNCS", "ProxmoxRealm"),
+        ("ProxmoxUser", "HAS_API_TOKEN", "ProxmoxAPIToken"),
+        ("ProxmoxUser", "HAS_TFA_FACTOR", "ProxmoxTFAFactor"),
         ("ProxmoxACL", "GRANTS_ACCESS_TO", "ProxmoxVM"),
         ("ProxmoxUser", "HAS_PERMISSION", "ProxmoxVM"),
     )
