@@ -119,7 +119,7 @@ def transform_backup_job_data(
                 "compression": job.get("compress"),
                 "mailnotification": job.get("mailnotification"),
                 "mailto": job.get("mailto"),
-                "notes": job.get("notes"),
+                "notes": job.get("notes-template"),
                 "prune_keep_last": prune_keep_last,
                 "prune_keep_hourly": prune_keep_hourly,
                 "prune_keep_daily": prune_keep_daily,

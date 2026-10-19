@@ -248,3 +248,26 @@ def test_transform_backup_job_parses_vmids():
         "test-cluster/pool": [],
         "test-cluster/missing": [],
     }
+
+
+def test_transform_backup_job_reads_notes_template():
+    """The backup job API returns the notes template as notes-template."""
+    raw_jobs = [
+        {
+            "id": "backup-0a1b2c3d-4e5f",
+            "type": "vzdump",
+            "schedule": "21:00",
+            "storage": "pbs",
+            "notes-template": "{{guestname}}",
+            "prune-backups": {"keep-daily": "3", "keep-weekly": "2"},
+            "fleecing": {"enabled": 0},
+        },
+    ]
+
+    job = transform_backup_job_data(raw_jobs, "test-cluster")[0]
+
+    assert job["notes"] == "{{guestname}}"
+    assert job["prune_keep_daily"] == 3
+    assert job["prune_keep_weekly"] == 2
+    for value in job.values():
+        assert not isinstance(value, dict)

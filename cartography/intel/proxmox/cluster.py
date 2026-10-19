@@ -202,9 +202,55 @@ def transform_cluster_data(
     }
 
 
+def _option_map(value: Any, default_key: str | None = None) -> Dict[str, Any]:
+    """
+    Read a datacenter option that holds a property string.
+
+    The API returns these options already parsed into an object, such as
+    {"type": "secure", "network": "10.0.0.0/24"} for migration. A plain
+    string, such as "type=secure,network=10.0.0.0/24" or just "secure" for
+    the default key, is parsed the same way.
+
+    :param value: Option value from /cluster/options
+    :param default_key: Key a bare value without "=" belongs to
+    :return: Map of option keys to values, empty when the option is not set
+    """
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value:
+        return {}
+    result: Dict[str, Any] = {}
+    for part in value.split(","):
+        key, sep, item = part.partition("=")
+        if sep:
+            result[key.strip()] = item.strip()
+        elif default_key:
+            result[default_key] = key.strip()
+    return result
+
+
+def _option_int(value: Any) -> int | None:
+    """
+    Convert a numeric datacenter option value, which can arrive as a string, to int.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(float(value))
+        except ValueError:
+            return None
+    return None
+
+
 def transform_cluster_options(cluster_options: Dict[str, Any]) -> Dict[str, Any]:
     """
     Transform cluster options into additional metadata fields.
+
+    migration, bwlimit and next-id are property strings that the API returns
+    as objects; only their documented keys become scalar properties.
 
     :param cluster_options: Raw cluster options from API
     :return: Dict of transformed cluster option fields
@@ -212,11 +258,16 @@ def transform_cluster_options(cluster_options: Dict[str, Any]) -> Dict[str, Any]
     if not cluster_options:
         return {}
 
+    migration = _option_map(cluster_options.get("migration"), default_key="type")
+    bwlimit = _option_map(cluster_options.get("bwlimit"))
+    next_id = _option_map(cluster_options.get("next-id"))
+
     return {
         # Migration settings
-        "migration_type": cluster_options.get("migration"),
-        "migration_network": cluster_options.get("migration_network"),
-        "migration_bandwidth_limit": cluster_options.get("bwlimit"),
+        "migration_type": migration.get("type"),
+        "migration_network": migration.get("network"),
+        # Bandwidth limit for migrations in KiB/s
+        "migration_bandwidth_limit": _option_int(bwlimit.get("migration")),
         # Console settings
         "console": cluster_options.get("console"),
         # Email/notification settings
@@ -231,16 +282,8 @@ def transform_cluster_options(cluster_options: Dict[str, Any]) -> Dict[str, Any]
         # Maximum workers
         "max_workers": cluster_options.get("max_workers"),
         # Next VMID settings
-        "next_id_lower": (
-            cluster_options.get("next-id", {}).get("lower")
-            if isinstance(cluster_options.get("next-id"), dict)
-            else None
-        ),
-        "next_id_upper": (
-            cluster_options.get("next-id", {}).get("upper")
-            if isinstance(cluster_options.get("next-id"), dict)
-            else None
-        ),
+        "next_id_lower": _option_int(next_id.get("lower")),
+        "next_id_upper": _option_int(next_id.get("upper")),
     }
 
 

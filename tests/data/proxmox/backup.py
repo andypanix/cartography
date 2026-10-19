@@ -12,7 +12,7 @@ MOCK_BACKUP_JOB_DATA = [
         "compress": "zstd",
         "mailnotification": "always",
         "mailto": "admin@example.com",
-        "notes": "Daily backup of all VMs",
+        "notes-template": "Daily backup of all VMs",
         "prune-backups": {
             "keep-last": "7",
             "keep-weekly": "4",
@@ -30,7 +30,7 @@ MOCK_BACKUP_JOB_DATA = [
         "compress": "gzip",
         "mailnotification": "failure",
         "mailto": "ops@example.com",
-        "notes": "Weekly full backup",
+        "notes-template": "Weekly full backup",
         "prune-backups": {
             "keep-last": "4",
             "keep-hourly": "2",
@@ -46,7 +46,7 @@ MOCK_BACKUP_JOB_DATA = [
         "mode": "suspend",
         "compress": "lzo",
         "mailnotification": "never",
-        "notes": "Container backups",
+        "notes-template": "Container backups",
         "prune-backups": {
             "keep-last": "3",
             "keep-daily": "10",

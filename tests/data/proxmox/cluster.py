@@ -75,9 +75,13 @@ MOCK_NODE_DATA = [
 ]
 
 MOCK_CLUSTER_OPTIONS = {
-    "migration": "secure",
-    "migration_network": "192.168.1.0/24",
-    "bwlimit": 102400,
+    # Property-string options come back parsed into objects.
+    "migration": {"type": "secure", "network": "192.168.1.0/24"},
+    "replication": {"type": "secure", "network": "192.168.1.0/24"},
+    "ha": {"shutdown_policy": "freeze"},
+    "bwlimit": {"migration": "102400", "default": "204800"},
+    "allowed-tags": ["prod", "test"],
+    "description": "",
     "console": "html5",
     "email_from": "admin@proxmox.local",
     "http_proxy": "http://proxy.example.com:8080",
