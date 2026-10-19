@@ -16,6 +16,10 @@ The module ingests:
 - **Access control**: users, API tokens, second factors, authentication realms, realm sync jobs, groups, roles, and ACLs, with the resources each ACL applies to. ACL entries for an API token link to the token, not to its user; each token stores `privsep`, which tells whether it is limited to its own ACLs or has all permissions of its user. The derived `HAS_PERMISSION` edges cover users and groups only, not API tokens. Users carry a TFA summary (`tfa_enabled`, `tfa_types`, `totp_locked`, `tfa_locked_until`).
 - **Firewall**: firewall rules of the cluster, nodes, QEMU VMs, LXC containers, and security groups; cluster and guest IP sets and aliases; and the firewall options of the cluster, each node, and each guest. Rules link to the security group they include and to the IP sets and aliases their source and destination name, when the name resolves to a synced IP set or alias.
 - **Certificates**: TLS certificates installed on each node.
+- **Resource mappings**: cluster-wide PCI, USB, and directory mappings, the nodes in their map, and the VMs whose configuration uses them (`hostpciN` or `usbN` with `mapping=`, `virtiofsN`).
+- **Notifications**: notification targets (sendmail, SMTP, gotify, webhook endpoints), the Proxmox users that mail targets notify, and the matchers that route notifications to targets. Passwords, tokens, webhook header and secret values, webhook bodies, and URL paths are never stored: only header and secret names, and the scheme, host, and port of gotify and webhook URLs.
+- **Metric servers**: external InfluxDB and Graphite servers the cluster sends metrics to, without tokens.
+- **ACME accounts**: ACME accounts used to order certificates, with their CA directory, contacts, and status, without the account key.
 
 ```{toctree}
 config
