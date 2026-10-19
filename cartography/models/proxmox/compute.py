@@ -241,6 +241,102 @@ class ProxmoxVMNodeProperties(CartographyNodeProperties):
         "agent_enabled",
         description="Whether the QEMU guest agent returned data.",
     )
+    hastate: PropertyRef = PropertyRef(
+        "hastate",
+        description="HA service status of the guest, such as started or stopped, when the HA manager handles it.",
+    )
+    pool: PropertyRef = PropertyRef(
+        "pool",
+        description="Name of the resource pool the guest belongs to.",
+    )
+    qmpstatus: PropertyRef = PropertyRef(
+        "qmpstatus",
+        description="VM run state from the QMP query-status command, such as running or paused.",
+    )
+    running_machine: PropertyRef = PropertyRef(
+        "running_machine",
+        description="QEMU machine type the running VM uses.",
+    )
+    running_qemu: PropertyRef = PropertyRef(
+        "running_qemu",
+        description="QEMU version the running VM uses.",
+    )
+    custom_cpu_model: PropertyRef = PropertyRef(
+        "custom_cpu_model",
+        description="Name of the custom CPU model set as the VM CPU type, without the custom- prefix.",
+    )
+    cloudinit_user: PropertyRef = PropertyRef(
+        "cloudinit_user",
+        description="User name that cloud-init configures in the current cloud-init image.",
+    )
+    cloudinit_type: PropertyRef = PropertyRef(
+        "cloudinit_type",
+        description="Cloud-init configuration format, such as nocloud or configdrive2.",
+    )
+    cloudinit_custom: PropertyRef = PropertyRef(
+        "cloudinit_custom",
+        description="Custom cloud-init snippet files that replace the generated configuration.",
+    )
+    cloudinit_upgrade: PropertyRef = PropertyRef(
+        "cloudinit_upgrade",
+        description="Whether cloud-init upgrades packages on first boot.",
+    )
+    cloudinit_nameserver: PropertyRef = PropertyRef(
+        "cloudinit_nameserver",
+        description="DNS servers that cloud-init configures.",
+    )
+    cloudinit_searchdomain: PropertyRef = PropertyRef(
+        "cloudinit_searchdomain",
+        description="DNS search domains that cloud-init configures.",
+    )
+    cloudinit_ipconfig: PropertyRef = PropertyRef(
+        "cloudinit_ipconfig",
+        description="Per-interface IP settings that cloud-init configures, as key=value entries such as ipconfig0=ip=dhcp.",
+    )
+    cloudinit_password_set: PropertyRef = PropertyRef(
+        "cloudinit_password_set",
+        description="Whether the cloud-init image sets a user password. The password itself is never stored.",
+    )
+    cloudinit_ssh_key_count: PropertyRef = PropertyRef(
+        "cloudinit_ssh_key_count",
+        description="Number of public SSH keys that cloud-init installs.",
+    )
+    cloudinit_ssh_key_fingerprints: PropertyRef = PropertyRef(
+        "cloudinit_ssh_key_fingerprints",
+        description="SHA256 fingerprints of the public SSH keys that cloud-init installs.",
+    )
+    guest_timezone: PropertyRef = PropertyRef(
+        "guest_timezone",
+        description="Time zone name reported by the QEMU guest agent.",
+    )
+    guest_timezone_offset: PropertyRef = PropertyRef(
+        "guest_timezone_offset",
+        description="Offset from UTC in seconds reported by the QEMU guest agent.",
+    )
+    guest_users: PropertyRef = PropertyRef(
+        "guest_users",
+        description="Users logged in to the VM, as domain\\user or user, reported by the QEMU guest agent.",
+    )
+
+
+@dataclass(frozen=True)
+class ProxmoxVMToCustomCPUModelRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+class ProxmoxVMToCustomCPUModelRel(CartographyRelSchema):
+    """The VM uses the custom CPU model as its CPU type."""
+
+    target_node_label: str = "ProxmoxCustomCPUModel"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("custom_cpu_model_id")},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "USES_CPU_MODEL"
+    properties: ProxmoxVMToCustomCPUModelRelProperties = (
+        ProxmoxVMToCustomCPUModelRelProperties()
+    )
 
 
 @dataclass(frozen=True)
@@ -287,7 +383,7 @@ class ProxmoxVMSchema(CartographyNodeSchema):
     properties: ProxmoxVMNodeProperties = ProxmoxVMNodeProperties()
     sub_resource_relationship: ProxmoxVMToClusterRel = ProxmoxVMToClusterRel()
     other_relationships: OtherRelationships = OtherRelationships(
-        [ProxmoxVMToNodeRel()],
+        [ProxmoxVMToNodeRel(), ProxmoxVMToCustomCPUModelRel()],
     )
 
 

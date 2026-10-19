@@ -14,6 +14,7 @@ import requests
 from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
+from cartography.intel.proxmox import guests
 from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.intel.proxmox.util import proxmox_api_retry
 from cartography.models.proxmox.compute import ProxmoxDiskSchema
@@ -35,12 +36,15 @@ def get_vms_for_node(proxmox_client: Any, node_name: str) -> List[Dict[str, Any]
     """
     Get all QEMU VMs on a node.
 
+    full=1 adds the QMP status and the running machine type and QEMU version
+    of running VMs.
+
     :param proxmox_client: Proxmox API client
     :param node_name: Node name
     :return: List of VM dicts
     :raises: Exception if API call fails
     """
-    vms = proxmox_client.nodes(node_name).qemu.get()
+    vms = proxmox_client.nodes(node_name).qemu.get(full=1)
     for vm in vms:
         vm["type"] = "qemu"
         vm["node"] = node_name
@@ -245,6 +249,7 @@ def transform_vm_data(
                 "guest_kernel_version": vm.get("guest_kernel_version"),
                 "guest_machine": vm.get("guest_machine"),
                 "agent_enabled": vm.get("agent_enabled", False),
+                **guests.guest_detail_properties(vm),
             }
         )
 
@@ -692,6 +697,11 @@ def sync(
     all_vms = []
     all_disks = []
     all_interfaces = []
+    all_snapshots = []
+    all_filesystems = []
+    guest_resources = guests.index_guest_resources(
+        guests.get_guest_resources(proxmox_client),
+    )
 
     for node in nodes:
         node_name = node["node"]
@@ -797,6 +807,18 @@ def sync(
                     }
                 )
 
+            details = guests.collect_guest_details(
+                proxmox_client,
+                vm,
+                vm_config,
+                cluster_id,
+                guest_resources,
+                enable_guest_agent,
+            )
+            enrich_interfaces_with_guest_data(interfaces, details.container_interfaces)
+            all_snapshots.extend(details.snapshots)
+            all_filesystems.extend(details.filesystems)
+
             all_disks.extend(disks)
             all_interfaces.extend(interfaces)
 
@@ -809,6 +831,9 @@ def sync(
 
     if all_interfaces:
         load_network_interfaces(neo4j_session, all_interfaces, cluster_id, update_tag)
+
+    guests.load_snapshots(neo4j_session, all_snapshots, cluster_id, update_tag)
+    guests.load_filesystems(neo4j_session, all_filesystems, cluster_id, update_tag)
 
     guest_agent_msg = " (guest agent enabled)" if enable_guest_agent else ""
     logger.info(

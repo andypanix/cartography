@@ -17,6 +17,7 @@ import cartography.intel.proxmox.certificate
 import cartography.intel.proxmox.cluster
 import cartography.intel.proxmox.compute
 import cartography.intel.proxmox.firewall
+import cartography.intel.proxmox.guests
 import cartography.intel.proxmox.ha
 import cartography.intel.proxmox.pool
 import cartography.intel.proxmox.storage
@@ -47,6 +48,8 @@ SCOPED_IDS = {
     "ProxmoxACL": "/vms/100:root@pam:Administrator",
     "ProxmoxFirewallRule": "cluster:0",
     "ProxmoxCertificate": "pve:pveproxy-ssl.pem",
+    "ProxmoxSnapshot": "pve/qemu/100/snapshot/base",
+    "ProxmoxCustomCPUModel": "avx",
 }
 
 
@@ -94,7 +97,23 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
             {
                 "scsi0": "local:vm-100-disk-0,size=8G",
                 "net0": "virtio=BC:24:11:00:00:01,bridge=vmbr0",
+                "cpu": "custom-avx",
             },
+        ),
+        (
+            cartography.intel.proxmox.guests,
+            "get_guest_resources",
+            [{"type": "qemu", "vmid": 100, "node": "pve", "pool": "prod"}],
+        ),
+        (
+            cartography.intel.proxmox.guests,
+            "get_custom_cpu_models",
+            [{"cputype": "custom-avx", "reported-model": "kvm64"}],
+        ),
+        (
+            cartography.intel.proxmox.guests,
+            "get_guest_snapshots",
+            [{"name": "base", "snaptime": 1700000000}],
         ),
         (
             storage,
@@ -227,6 +246,8 @@ def test_two_clusters_with_identical_names_stay_separate(neo4j_session):
         ("ProxmoxVM", "HAS_DISK", "ProxmoxDisk"),
         ("ProxmoxDisk", "STORED_ON", "ProxmoxStorage"),
         ("ProxmoxVM", "HAS_NETWORK_INTERFACE", "ProxmoxNetworkInterface"),
+        ("ProxmoxVM", "HAS_SNAPSHOT", "ProxmoxSnapshot"),
+        ("ProxmoxVM", "USES_CPU_MODEL", "ProxmoxCustomCPUModel"),
         ("ProxmoxStorage", "AVAILABLE_ON", "ProxmoxNode"),
         ("ProxmoxPool", "CONTAINS_VM", "ProxmoxVM"),
         ("ProxmoxBackupJob", "BACKS_UP", "ProxmoxVM"),
