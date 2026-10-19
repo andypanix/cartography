@@ -18,6 +18,7 @@ from cartography.config import Config
 from cartography.graph.job import GraphJob
 from cartography.intel.proxmox import access
 from cartography.intel.proxmox import backup
+from cartography.intel.proxmox import ceph
 from cartography.intel.proxmox import certificate
 from cartography.intel.proxmox import cluster
 from cartography.intel.proxmox import compute
@@ -132,6 +133,16 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
 
     # Sync storage before compute so disks can link to their storage
     storage.sync(
+        neo4j_session,
+        proxmox_client,
+        cluster_id,
+        config.update_tag,
+        common_job_parameters,
+    )
+
+    # Sync the hyper-converged Ceph cluster, after storage so RBD and CephFS
+    # storage can link to their pools and file systems
+    ceph.sync(
         neo4j_session,
         proxmox_client,
         cluster_id,
@@ -259,6 +270,8 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     GraphJob.from_node_schema(ProxmoxCertificateSchema(), common_job_parameters).run(
         neo4j_session
     )
+
+    ceph.cleanup(neo4j_session, common_job_parameters)
 
     # Note: ProxmoxCluster doesn't need cleanup since it's the tenant root
     # and has no sub_resource_relationship

@@ -23,10 +23,12 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 
 | Privilege | Used for |
 | --- | --- |
-| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall |
+| `Sys.Audit` | Cluster status and options, nodes, node networks, certificates, users, groups, roles, ACLs, HA, firewall, Ceph (OSD flags, OSD details, and OSD volumes need `Sys.Audit`; the other Ceph endpoints accept `Sys.Audit` or `Datastore.Audit`) |
 | `VM.Audit` | VM and container configuration, guest firewall rules, backup jobs |
 | `Datastore.Audit` | Storage backends |
 | `Pool.Audit` | Resource pools |
+
+Ceph muted health checks (`/cluster/ceph/health-mute`) exist only on Proxmox VE 9. On Proxmox VE 8.4 Cartography syncs Ceph without them.
 
 ## Optional Permissions
 

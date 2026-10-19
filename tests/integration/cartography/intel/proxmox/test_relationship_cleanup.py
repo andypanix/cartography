@@ -11,6 +11,7 @@ from unittest.mock import patch
 import cartography.intel.proxmox
 import cartography.intel.proxmox.access
 import cartography.intel.proxmox.backup
+import cartography.intel.proxmox.ceph
 import cartography.intel.proxmox.certificate
 import cartography.intel.proxmox.cluster
 import cartography.intel.proxmox.compute
@@ -25,6 +26,7 @@ from tests.data.proxmox.access import MOCK_GROUP_MEMBERS_DATA
 from tests.data.proxmox.access import MOCK_ROLE_DATA
 from tests.data.proxmox.access import MOCK_USER_DATA
 from tests.data.proxmox.backup import MOCK_BACKUP_JOB_DATA
+from tests.data.proxmox.ceph import MOCK_CEPH_NOT_INSTALLED_ERROR
 from tests.data.proxmox.cluster import MOCK_CLUSTER_CONFIG
 from tests.data.proxmox.cluster import MOCK_CLUSTER_DATA
 from tests.data.proxmox.cluster import MOCK_CLUSTER_OPTIONS
@@ -189,7 +191,12 @@ def _run_ingestion(
             "get_group_members",
             return_value=MOCK_GROUP_MEMBERS_DATA,
         ),
-        # Firewall and certificates are not under test
+        # Ceph, firewall and certificates are not under test
+        patch.object(
+            cartography.intel.proxmox.ceph,
+            "get_ceph_status",
+            side_effect=MOCK_CEPH_NOT_INSTALLED_ERROR,
+        ),
         patch.object(
             cartography.intel.proxmox.firewall,
             "get_cluster_firewall_rules",
