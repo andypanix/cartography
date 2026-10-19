@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from proxmoxer.core import ResourceException
 
+import cartography.intel.proxmox.firewall as firewall
 import cartography.intel.proxmox.sdn as sdn
 from tests.data.proxmox import sdn as data
 from tests.integration.util import check_nodes
@@ -118,12 +119,20 @@ def _run_sync(
     getters: dict[str, Any],
     cluster_id: str = TEST_CLUSTER_ID,
     update_tag: int = TEST_UPDATE_TAG,
+    firewall_references: firewall.FirewallReferences | None = None,
 ) -> None:
     common_job_parameters = {"UPDATE_TAG": update_tag, "CLUSTER_ID": cluster_id}
     with ExitStack() as stack:
         for name, side_effect in getters.items():
             stack.enter_context(patch.object(sdn, name, side_effect=side_effect))
-        sdn.sync(neo4j_session, None, cluster_id, update_tag, common_job_parameters)
+        sdn.sync(
+            neo4j_session,
+            None,
+            cluster_id,
+            update_tag,
+            common_job_parameters,
+            firewall_references=firewall_references,
+        )
         sdn.cleanup(neo4j_session, common_job_parameters)
 
 
@@ -668,3 +677,69 @@ def test_sync_sdn_keeps_clusters_apart(neo4j_session):
         ("cluster-a/vnet1",),
         ("cluster-a/vlan10",),
     }
+
+
+def test_sync_sdn_vnet_rules_link_firewall_references(neo4j_session):
+    # Arrange - cluster IP set, alias, and security group from the firewall sync
+    _reset(neo4j_session)
+    _seed(neo4j_session, C)
+    references = firewall.FirewallReferences(
+        ipsets=firewall.transform_ipset_data(
+            [{"name": "trusted"}], {"trusted": []}, C, "cluster"
+        ),
+        aliases=firewall.transform_alias_data(
+            [{"name": "backend", "cidr": "10.10.0.10"}], C, "cluster"
+        ),
+        security_groups=firewall.transform_security_group_data([{"group": "web"}], C),
+    )
+    firewall.load_ipsets(neo4j_session, references.ipsets, C, TEST_UPDATE_TAG)
+    firewall.load_aliases(neo4j_session, references.aliases, C, TEST_UPDATE_TAG)
+    firewall.load_security_groups(
+        neo4j_session, references.security_groups, C, TEST_UPDATE_TAG
+    )
+    vnet_rules = {
+        "vnet1": [
+            {
+                "pos": 0,
+                "type": "forward",
+                "action": "ACCEPT",
+                "source": "+dc/trusted",
+                "dest": "backend",
+            },
+            {"pos": 1, "type": "group", "action": "web"},
+        ],
+        "vlan10": [],
+    }
+
+    # Act
+    _run_sync(
+        neo4j_session,
+        _getters(get_vnet_firewall_rules=lambda client, vnet: vnet_rules[vnet]),
+        firewall_references=references,
+    )
+
+    # Assert
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxFirewallRule",
+        "id",
+        "ProxmoxFirewallIPSet",
+        "id",
+        "HAS_SOURCE",
+    ) == {(f"{C}/vnet:vnet1:0", f"{C}/cluster:trusted")}
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxFirewallRule",
+        "id",
+        "ProxmoxFirewallAlias",
+        "id",
+        "HAS_DESTINATION",
+    ) == {(f"{C}/vnet:vnet1:0", f"{C}/cluster:backend")}
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxFirewallRule",
+        "id",
+        "ProxmoxFirewallSecurityGroup",
+        "id",
+        "USES_SECURITY_GROUP",
+    ) == {(f"{C}/vnet:vnet1:1", firewall.security_group_id(C, "web"))}

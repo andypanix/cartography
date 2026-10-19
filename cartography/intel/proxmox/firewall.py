@@ -7,6 +7,7 @@ Follows Cartography's Get → Transform → Load pattern.
 import logging
 import re
 from typing import Any
+from typing import NamedTuple
 
 import neo4j
 
@@ -85,6 +86,14 @@ IPSET_REFERENCE = re.compile(rf"^\+(?:(dc|guest|sdn)/)?({_REFERENCE_NAME})$")
 ALIAS_REFERENCE = re.compile(rf"^(?:(dc|guest)/)?({_REFERENCE_NAME})$")
 
 CLUSTER_SCOPE: tuple[str, str | None] = ("cluster", None)
+
+
+class FirewallReferences(NamedTuple):
+    """Transformed IP sets, aliases, and security groups that firewall rules can name."""
+
+    ipsets: list[dict[str, Any]]
+    aliases: list[dict[str, Any]]
+    security_groups: list[dict[str, Any]]
 
 
 # ============================================================================
@@ -854,7 +863,7 @@ def sync(
     cluster_id: str,
     update_tag: int,
     common_job_parameters: dict[str, Any],
-) -> None:
+) -> FirewallReferences:
     """
     Sync firewall configuration.
 
@@ -867,6 +876,8 @@ def sync(
     :param cluster_id: Parent cluster ID
     :param update_tag: Sync timestamp
     :param common_job_parameters: Common parameters
+    :return: The synced IP sets, aliases, and security groups, so that rules
+        loaded by other syncs, such as SDN VNet rules, can link to them
     """
     logger.info("Syncing Proxmox firewall configuration")
 
@@ -1012,3 +1023,4 @@ def sync(
         len(all_aliases),
         len(all_ipsets),
     )
+    return FirewallReferences(all_ipsets, all_aliases, security_groups)

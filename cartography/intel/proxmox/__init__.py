@@ -256,7 +256,7 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     )
 
     # Sync firewall options, rules, security groups, aliases, and IP sets
-    firewall.sync(
+    firewall_references = firewall.sync(
         neo4j_session,
         proxmox_client,
         cluster_id,
@@ -264,14 +264,16 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
         common_job_parameters,
     )
 
-    # Sync SDN after compute and firewall: VNets link to guest interfaces and
-    # VNet firewall rules reuse the firewall rule model
+    # Sync SDN after compute and firewall: VNets link to guest interfaces, and
+    # VNet firewall rules reuse the firewall rule model and link to the IP
+    # sets, aliases, and security groups the firewall sync returned
     sdn.sync(
         neo4j_session,
         proxmox_client,
         cluster_id,
         config.update_tag,
         common_job_parameters,
+        firewall_references=firewall_references,
     )
 
     # Sync SSL/TLS certificates
