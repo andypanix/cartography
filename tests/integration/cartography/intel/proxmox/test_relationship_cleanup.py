@@ -11,6 +11,7 @@ from unittest.mock import patch
 import cartography.intel.proxmox
 import cartography.intel.proxmox.access
 import cartography.intel.proxmox.backup
+import cartography.intel.proxmox.backup_coverage
 import cartography.intel.proxmox.certificate
 import cartography.intel.proxmox.cluster
 import cartography.intel.proxmox.compute
@@ -18,6 +19,7 @@ import cartography.intel.proxmox.firewall
 import cartography.intel.proxmox.ha
 import cartography.intel.proxmox.node_details
 import cartography.intel.proxmox.pool
+import cartography.intel.proxmox.replication
 import cartography.intel.proxmox.storage
 from cartography.config import Config
 from tests.data.proxmox.access import MOCK_ACL_DATA
@@ -260,6 +262,27 @@ def _run_ingestion(
         patch.object(
             cartography.intel.proxmox.certificate,
             "get_node_certificates",
+            return_value=[],
+        ),
+        # Backup coverage and replication are not under test
+        patch.object(
+            cartography.intel.proxmox.backup_coverage,
+            "get_included_volumes",
+            return_value={},
+        ),
+        patch.object(
+            cartography.intel.proxmox.backup_coverage,
+            "get_not_backed_up",
+            return_value=[],
+        ),
+        patch.object(
+            cartography.intel.proxmox.backup_coverage,
+            "get_vzdump_defaults",
+            return_value={},
+        ),
+        patch.object(
+            cartography.intel.proxmox.replication,
+            "get_cluster_replication_jobs",
             return_value=[],
         ),
     ]

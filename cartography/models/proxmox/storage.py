@@ -55,6 +55,13 @@ class ProxmoxStorageNodeProperties(CartographyNodeProperties):
         "available",
         description="Available storage space in bytes, as reported by the node status.",
     )
+    identity: PropertyRef = PropertyRef(
+        "identity",
+        description=(
+            "Unique identifier of the storage instance reported by Proxmox VE 9. "
+            "Its format depends on the storage type. Only read for shared storage."
+        ),
+    )
 
 
 @dataclass(frozen=True)

@@ -23,17 +23,32 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 
 | Privilege | Used for |
 | --- | --- |
-| `Sys.Audit` | Cluster status and options, Corosync configuration and QDevice status, nodes, node networks, certificates, users, API tokens, second factors, realms, realm sync jobs, groups, roles, ACLs, HA groups, resources, rules and status, cluster and node firewall (rules, options, security groups, aliases, IP sets), metric servers, node disks, SMART data, ZFS, LVM, managed directories, package versions, APT repositories, node options, DNS, time, services, PCI devices and mediated device types |
-| `VM.Audit` | VM and container configuration, snapshots, cloud-init values, container IP addresses, VM and container firewall (rules, options, aliases, IP sets), backup jobs |
-| `Datastore.Audit` | Storage backends |
+| `Sys.Audit` | Cluster status and options, Corosync configuration and QDevice status, nodes, node networks, certificates, users, API tokens, second factors, realms, realm sync jobs, groups, roles, ACLs, HA groups, resources, rules and status, cluster and node firewall (rules, options, security groups, aliases, IP sets), guests and volumes included in backup jobs, guests not covered by backups, all fields of the node vzdump defaults, metric servers, node disks, SMART data, ZFS, LVM, managed directories, package versions, APT repositories, node options, DNS, time, services, PCI devices and mediated device types |
+| `VM.Audit` | VM and container configuration, snapshots, cloud-init values, container IP addresses, VM and container firewall (rules, options, aliases, IP sets), backup jobs, replication jobs and their state |
+| `Datastore.Audit` | Storage backends, storage content (backup archives, ISO images, container templates), storage identity (Proxmox VE 9), node vzdump defaults (on the default backup storage) |
 | `Pool.Audit` | Resource pools, including nested pools. Cartography lists only the pools where the user has `Pool.Audit`. |
 | `Mapping.Audit` | PCI, USB, and directory resource mappings; notification targets, endpoints, and matchers on `/mapping/notifications`; custom CPU models (Proxmox VE 9 only; skipped on Proxmox VE 8.4) |
+
+Cartography does not read `/storage/{storage}`: it requires `Datastore.Allocate`, and `/storage` already returns the storage configuration. The storage identity endpoint exists only on Proxmox VE 9; on Proxmox VE 8.4 Cartography skips it.
+
+The number of API calls grows with the cluster. For N online nodes and J backup jobs:
+
+- Backup coverage makes `J + N + 3` calls.
+- Storage content makes one listing per active shared storage, plus one per node for each active local storage that can hold backups, ISO images, or container templates. Storage that only holds guest disks is not listed.
+- Storage identity makes one call per active shared storage on Proxmox VE 9, and one call in total on Proxmox VE 8.4.
+- Replication makes `N + 2` calls. A per-job status call is only added when a node returns a job without its state.
+
+When a storage content listing fails, Cartography logs a warning with the node and storage and goes on with the rest of the sync. The backup archives, ISO images and container templates of a storage that is not read in a run, because the listing failed or the storage is inactive or disabled, are kept as seen in the last successful listing. An offline Proxmox Backup Server therefore does not make its guests look unbacked. Content of a storage that no node reports any more, for example after it is removed from the configuration, is deleted. A failed storage identity read is skipped in the same way, storage by storage.
 
 The resource mapping lists (`/cluster/mapping/pci`, `/cluster/mapping/usb`, `/cluster/mapping/dir`) return only the mappings the token has `Mapping.Audit`, `Mapping.Use`, or `Mapping.Modify` on, under `/mapping/<type>/<id>`. Without it, Cartography syncs no mappings and logs no error.
 
 Notification targets and matchers accept `Mapping.Audit`, `Mapping.Modify`, or `Mapping.Use` on `/mapping/notifications`. The endpoint details need `Mapping.Audit` or `Mapping.Modify` there (gotify and webhook lists accept only `Mapping.Audit`). When a token gets 403 on one of them, Cartography logs it and skips that part: without endpoint details, targets keep only their name, type, and status.
 
 The ACME account list is open to every user, but the account details (`/cluster/acme/account/{name}`) are readable only by `root@pam`, on both Proxmox VE 8.4 and 9. With `PVEAuditor`, Cartography syncs the account names only and logs it. Cartography does not read `/cluster/acme/plugins`, which needs `Sys.Modify` and holds DNS API credentials.
+
+The node details need `Sys.Audit` on `/`, or on `/nodes/{node}` for the disk list, package versions, APT repositories, DNS, time and services. The PCI device and mediated device type endpoints accept either `Sys.Audit` or `Sys.Modify`, so `Sys.Audit` is enough. The subscription endpoint is readable by any user, but Proxmox returns the subscription key only with `Sys.Audit`. The privileges are the same on Proxmox VE 8.4 and 9. Cartography never calls `/nodes/{node}/apt/update`, which needs `Sys.Modify`.
+
+For each online node, the node details sync makes 14 API calls, plus one per local disk (SMART data), one per ZFS pool (pool details) and one per PCI device that supports mediated devices.
 
 ### Access control endpoints
 
@@ -52,10 +67,6 @@ The ACME account list is open to every user, but the account details (`/cluster/
 `PVEAuditor` cannot call `/access/users/{userid}/token` for other users: that endpoint requires `User.Modify`. Cartography does not call it and reads the same token fields (`tokenid`, `comment`, `expire`, `privsep`) from `/access/users?full=1`, which `Sys.Audit` covers.
 
 Cartography never reads secrets: the API returns no token secrets, TOTP secrets or recovery codes, and Cartography keeps only an allowlist of realm settings, so the LDAP bind password and the OpenID client key are never stored.
-
-The node details need `Sys.Audit` on `/`, or on `/nodes/{node}` for the disk list, package versions, APT repositories, DNS, time and services. The PCI device and mediated device type endpoints accept either `Sys.Audit` or `Sys.Modify`, so `Sys.Audit` is enough. The subscription endpoint is readable by any user, but Proxmox returns the subscription key only with `Sys.Audit`. The privileges are the same on Proxmox VE 8.4 and 9. Cartography never calls `/nodes/{node}/apt/update`, which needs `Sys.Modify`.
-
-For each online node, the node details sync makes 14 API calls, plus one per local disk (SMART data), one per ZFS pool (pool details) and one per PCI device that supports mediated devices.
 
 ## Optional Permissions
 
