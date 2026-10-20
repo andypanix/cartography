@@ -267,7 +267,12 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     )
 
     # Sync storage before compute so disks can link to their storage
-    storage_status_map = runner.run("storage", storage.sync, *sync_args)
+    storage_status_map = runner.run(
+        "storage",
+        storage.sync,
+        *sync_args,
+        detailed_reads=config.proxmox_detailed_reads,
+    )
 
     # Sync the hyper-converged Ceph cluster, after storage so RBD and CephFS
     # storage can link to their pools and file systems. The result tells
@@ -345,7 +350,12 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
 
     # Sync disks, storage, packages, repositories, subscription and system
     # settings of each online node; cleans up its own node types.
-    runner.run("node details", node_details.sync, *sync_args)
+    runner.run(
+        "node details",
+        node_details.sync,
+        *sync_args,
+        detailed_reads=config.proxmox_detailed_reads,
+    )
 
     # Cleanup of each module that synced, after every module has loaded so
     # that relationships between modules are current. Each entry lists the

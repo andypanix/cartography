@@ -1483,6 +1483,21 @@ class CLI:
                     hidden=PANEL_PROXMOX not in visible_panels,
                 ),
             ] = 60,
+            proxmox_detailed_reads: Annotated[
+                bool,
+                typer.Option(
+                    "--proxmox-detailed-reads",
+                    help=(
+                        "Also read /nodes/{node}/services/{service}/state for each "
+                        "service and /nodes/{node}/storage/{storage}/status for each "
+                        "active storage of each node. These extra calls (about 23 per "
+                        "node plus one per storage per node) return no field the list "
+                        "endpoints lack."
+                    ),
+                    rich_help_panel=PANEL_PROXMOX,
+                    hidden=PANEL_PROXMOX not in visible_panels,
+                ),
+            ] = False,
             # =================================================================
             # GSuite Options
             # =================================================================
@@ -4108,6 +4123,7 @@ class CLI:
                 proxmox_verify_ssl=proxmox_verify_ssl,
                 proxmox_enable_guest_agent=proxmox_enable_guest_agent,
                 proxmox_request_timeout=proxmox_request_timeout,
+                proxmox_detailed_reads=proxmox_detailed_reads,
                 nist_cve_url=nist_cve_url,
                 cve_enabled=cve_enabled,
                 cve_api_key=cve_api_key,

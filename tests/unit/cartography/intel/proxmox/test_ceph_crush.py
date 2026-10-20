@@ -202,6 +202,27 @@ def test_transform_crush_rule_details():
     assert details["replicated_rule"]["failure_domain"] == "host"
 
 
+def test_failure_domain_is_the_outermost_choose_step():
+    # An EC rule that picks racks, then hosts within each rack, spreads its
+    # chunks across racks: the first choose step after take wins.
+    rule = ceph_crush.CrushRule(
+        name="ec_rack",
+        steps=[
+            "set_chooseleaf_tries 5",
+            "take default class hdd",
+            "choose indep 0 type rack",
+            "chooseleaf indep 2 type host",
+            "emit",
+        ],
+    )
+    assert ceph_crush._failure_domain(rule) == "rack"
+
+
+def test_failure_domain_without_choose_step_is_none():
+    rule = ceph_crush.CrushRule(name="r", steps=["take default", "emit"])
+    assert ceph_crush._failure_domain(rule) is None
+
+
 def test_transform_crush_rules_without_crush_map_leaves_details_empty():
     rules = ceph.transform_crush_rules([{"name": "r"}], CLUSTER_ID, CEPH_ID)
     assert rules[0]["rule_id"] is None

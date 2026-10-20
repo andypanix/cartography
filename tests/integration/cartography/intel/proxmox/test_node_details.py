@@ -65,6 +65,7 @@ def _sync(
     update_tag: int,
     nodes: list[dict[str, Any]],
     overrides: dict[str, Any] | None = None,
+    detailed_reads: bool = True,
 ) -> dict:
     mocks = {}
     with ExitStack() as stack:
@@ -80,6 +81,7 @@ def _sync(
             TEST_CLUSTER_ID,
             update_tag,
             {"UPDATE_TAG": update_tag, "CLUSTER_ID": TEST_CLUSTER_ID},
+            detailed_reads=detailed_reads,
         )
     return mocks
 
@@ -373,6 +375,26 @@ def test_service_state_error_keeps_service_list_values(neo4j_session, caplog):
     }
     assert check_nodes(neo4j_session, "ProxmoxPhysicalDisk", ["id"])
     assert "Could not read the state of service corosync" in caplog.text
+
+
+def test_service_state_not_read_without_detailed_reads(neo4j_session):
+    # Arrange
+    _seed(neo4j_session)
+
+    # Act - the default sync, without --proxmox-detailed-reads
+    mocks = _sync(
+        neo4j_session,
+        TEST_UPDATE_TAG,
+        [{"node": "node1", "status": "online"}],
+        detailed_reads=False,
+    )
+
+    # Assert - services come from the list alone
+    mocks["get_node_service_state"].assert_not_called()
+    assert check_nodes(neo4j_session, "ProxmoxService", ["name", "state"]) == {
+        ("pveproxy", "running"),
+        ("corosync", "dead"),
+    }
 
 
 def test_mdev_error_keeps_pci_device_without_mdev_types(neo4j_session):

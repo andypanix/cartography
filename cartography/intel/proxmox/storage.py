@@ -340,6 +340,7 @@ def sync(
     cluster_id: str,
     update_tag: int,
     common_job_parameters: Dict[str, Any],
+    detailed_reads: bool = False,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
     Sync storage resources.
@@ -349,6 +350,9 @@ def sync(
     :param cluster_id: Parent cluster ID
     :param update_tag: Sync timestamp
     :param common_job_parameters: Common parameters
+    :param detailed_reads: Also read the status endpoint of each active storage
+        on each node (--proxmox-detailed-reads), which returns no field the
+        per-node list lacks
     :return: Map of node_name -> storage status list, reused by the content sync
     """
     logger.info("Syncing Proxmox storage")
@@ -363,9 +367,11 @@ def sync(
     for node in nodes:
         node_name = node["node"]
         storage_status = get_storage_status(proxmox_client, node_name)
-        storage_status_map[node_name] = merge_storage_status_details(
-            proxmox_client, node_name, storage_status
-        )
+        if detailed_reads:
+            storage_status = merge_storage_status_details(
+                proxmox_client, node_name, storage_status
+            )
+        storage_status_map[node_name] = storage_status
 
     # TRANSFORM - manipulate data for ingestion
     identities = get_shared_storage_identities(

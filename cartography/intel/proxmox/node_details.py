@@ -1206,9 +1206,13 @@ def _collect_node(
     proxmox_client: Any,
     node_name: str,
     cluster_id: str,
+    detailed_reads: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     """
     Read and transform every detail of one node.
+
+    :param detailed_reads: Also read the state endpoint of each service, which
+        returns no field the service list lacks
 
     :return: Transformed records keyed by node label
     """
@@ -1287,16 +1291,11 @@ def _collect_node(
             cluster_id,
         ),
     )
+    services = get_node_services(proxmox_client, node_name)
+    if detailed_reads:
+        services = merge_service_states(proxmox_client, node_name, services)
     data_by_label["ProxmoxService"].extend(
-        transform_services(
-            merge_service_states(
-                proxmox_client,
-                node_name,
-                get_node_services(proxmox_client, node_name),
-            ),
-            node_name,
-            cluster_id,
-        ),
+        transform_services(services, node_name, cluster_id),
     )
     pci_devices = get_pci_devices(proxmox_client, node_name)
     mdev_types_by_id: dict[str, list[dict[str, Any]]] = {}
@@ -1319,6 +1318,7 @@ def sync(
     cluster_id: str,
     update_tag: int,
     common_job_parameters: dict[str, Any],
+    detailed_reads: bool = False,
 ) -> None:
     """
     Sync hardware, software and system details of every online node.
@@ -1339,6 +1339,8 @@ def sync(
     :param cluster_id: Parent cluster ID
     :param update_tag: Sync timestamp
     :param common_job_parameters: Common parameters including UPDATE_TAG and CLUSTER_ID
+    :param detailed_reads: Also read the state endpoint of each service
+        (--proxmox-detailed-reads), one call per service per node
     """
     logger.info("Syncing Proxmox node hardware, software and system details")
 
@@ -1354,7 +1356,9 @@ def sync(
     failed_nodes: list[str] = []
     for node_name in online_nodes:
         try:
-            node_data = _collect_node(proxmox_client, node_name, cluster_id)
+            node_data = _collect_node(
+                proxmox_client, node_name, cluster_id, detailed_reads
+            )
         except PROXMOX_API_ERRORS as e:
             # Nothing of a failed node is loaded, so its previous details stay
             # untouched instead of being partly overwritten.

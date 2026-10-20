@@ -9,8 +9,9 @@ agent data (filesystems, logged-in users, time zone). It also syncs the
 cluster's custom CPU models, which VMs reference from their CPU type.
 
 The per-guest status endpoint (/nodes/{node}/{type}/{vmid}/status/current) is
-read for running guests only, for what the per-node list and
-/cluster/resources lack: the HA manager status, the SPICE and clipboard
+read for running guests and for stopped guests that /cluster/resources reports
+as HA-managed (so a guest in HA error or fence state still gets its HA
+status), for what the per-node list and /cluster/resources lack: the HA manager status, the SPICE and clipboard
 display settings, and the Proxmox QEMU features. Runtime counters such as CPU
 usage, uptime, or the process ID are not stored.
 
@@ -300,7 +301,7 @@ SNAPSHOT_CONFIG_PROPERTIES = (
 
 def transform_guest_status(status: dict[str, Any]) -> dict[str, Any]:
     """
-    Turn the status of a running guest into VM properties.
+    Turn the status of a guest into VM properties.
 
     Keeps the HA manager status and the display and Proxmox QEMU feature
     settings. Runtime counters (CPU, memory and disk usage, uptime, process ID)
@@ -769,8 +770,9 @@ def collect_guest_details(
     vm["hastate"] = resource.get("hastate")
     vm["pool"] = resource.get("pool")
 
-    # Values of the per-node list win; the status of a running guest fills in
-    # what the list lacks.
+    # Values of the per-node list win; the status fills in what the list
+    # lacks. It is read for running guests, and for stopped guests that are
+    # HA-managed, whose HA state (such as error or fence) only it reports.
     status = (
         _read_or_none(
             get_guest_status,
@@ -780,7 +782,7 @@ def collect_guest_details(
             vmid,
             vm_type,
         )
-        if running
+        if running or vm["hastate"]
         else None
     )
     status_values = transform_guest_status(status) if isinstance(status, dict) else {}

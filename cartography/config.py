@@ -273,6 +273,9 @@ class Config:
     :param proxmox_enable_guest_agent: Collect data from the QEMU guest agent of running VMs. Optional.
     :type proxmox_request_timeout: int
     :param proxmox_request_timeout: Seconds to timeout for Proxmox VE API requests. Optional.
+    :type proxmox_detailed_reads: bool
+    :param proxmox_detailed_reads: Also read the per-service state and per-storage status
+    endpoints, which add no field the list endpoints lack. Optional.
     :type: nist_cve_url: str
     :param nist_cve_url: NIST CVE data provider base URI, e.g. https://nvd.nist.gov/feeds/json/cve/1.1. Optional.
     :type: gsuite_auth_method: str
@@ -842,6 +845,7 @@ class Config:
         proxmox_verify_ssl=True,
         proxmox_enable_guest_agent=False,
         proxmox_request_timeout=60,
+        proxmox_detailed_reads=False,
     ):
         self.neo4j_uri = neo4j_uri
         self.neo4j_user = neo4j_user
@@ -1167,3 +1171,4 @@ class Config:
         self.proxmox_verify_ssl = proxmox_verify_ssl
         self.proxmox_enable_guest_agent = proxmox_enable_guest_agent
         self.proxmox_request_timeout = proxmox_request_timeout
+        self.proxmox_detailed_reads = proxmox_detailed_reads
