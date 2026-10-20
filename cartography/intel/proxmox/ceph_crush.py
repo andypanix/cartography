@@ -297,15 +297,23 @@ def _take_targets(rule: CrushRule) -> list[tuple[str, str | None]]:
 
 
 def _failure_domain(rule: CrushRule) -> str | None:
-    """Return the bucket type of the last choose or chooseleaf step."""
-    domain = None
+    """
+    Return the bucket type of the first choose or chooseleaf step after a take.
+
+    The first step picks the outermost failure domain: a rule that chooses
+    racks and then hosts within each rack spreads its replicas across racks.
+    """
+    taken = False
     for step in rule.steps:
         tokens = step.split()
-        if tokens[0].startswith("choose") and "type" in tokens:
+        if tokens[0] == "take":
+            taken = True
+            continue
+        if taken and tokens[0].startswith("choose") and "type" in tokens:
             index = tokens.index("type")
             if index + 1 < len(tokens):
-                domain = tokens[index + 1]
-    return domain
+                return tokens[index + 1]
+    return None
 
 
 def transform_crush_rule_details(crush: CrushMap) -> dict[str, dict[str, Any]]:

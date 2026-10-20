@@ -10,7 +10,8 @@ local to the node that holds the OSD and are read from that node.
 
 The CRUSH map is read as decompiled text from the same node and parsed by
 ceph_crush. A CRUSH map that cannot be read or parsed is logged and skipped,
-the rest of Ceph is still synced, and the existing CRUSH buckets are kept.
+the rest of Ceph is still synced, and the existing CRUSH buckets, CRUSH rule
+details and device classes are kept.
 """
 
 import logging
@@ -24,6 +25,7 @@ import requests
 from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
+from cartography.client.core.tx import read_list_of_dicts_tx
 from cartography.graph.job import GraphJob
 from cartography.intel.proxmox import cluster
 from cartography.intel.proxmox import storage
@@ -934,6 +936,48 @@ def _read_crush_map(proxmox_client: Any, node_name: str) -> CrushMap | None:
         return None
 
 
+def get_last_known_crush_details(
+    neo4j_session: neo4j.Session,
+    cluster_id: str,
+    ceph_cluster_id: str,
+) -> tuple[dict[str, dict[str, Any]], list[str] | None]:
+    """
+    Read the CRUSH details the graph holds from the last readable CRUSH map.
+
+    Used when the CRUSH map cannot be read or parsed, so that the rule details
+    and the device classes are loaded again with their last known values
+    instead of being written as null.
+
+    :param neo4j_session: Neo4j session
+    :param cluster_id: Proxmox VE cluster ID
+    :param ceph_cluster_id: Graph ID of the Ceph cluster
+    :return: Rule details keyed by rule name, and the device classes of the
+        Ceph cluster (None when unknown)
+    """
+    rows = neo4j_session.execute_read(
+        read_list_of_dicts_tx,
+        """
+        MATCH (r:ProxmoxCephCrushRule {cluster_id: $CLUSTER_ID})
+        RETURN r.name AS name, r {.*} AS properties
+        """,
+        CLUSTER_ID=cluster_id,
+    )
+    rule_details = {
+        row["name"]: {key: row["properties"].get(key) for key in CRUSH_RULE_DETAIL_KEYS}
+        for row in rows
+    }
+    clusters = neo4j_session.execute_read(
+        read_list_of_dicts_tx,
+        """
+        MATCH (c:ProxmoxCephCluster {id: $CEPH_CLUSTER_ID})
+        RETURN c.crush_device_classes AS device_classes
+        """,
+        CEPH_CLUSTER_ID=ceph_cluster_id,
+    )
+    device_classes = clusters[0]["device_classes"] if clusters else None
+    return rule_details, device_classes
+
+
 def _read_cluster_level(
     call: Callable[[], T], fallback: Callable[[], T], what: str
 ) -> T:
@@ -1071,11 +1115,19 @@ def sync(
     )
     ceph_cluster_id = ceph_cluster["id"]
     fs_names = [fs["name"] for fs in filesystems]
+    if crush:
+        rule_details = transform_crush_rule_details(crush)
+    else:
+        # Keep the values read from the last readable CRUSH map, as the
+        # CRUSH buckets are kept by skipping their cleanup.
+        rule_details, ceph_cluster["crush_device_classes"] = (
+            get_last_known_crush_details(neo4j_session, cluster_id, ceph_cluster_id)
+        )
     transformed_rules = transform_crush_rules(
         rules,
         cluster_id,
         ceph_cluster_id,
-        transform_crush_rule_details(crush) if crush else None,
+        rule_details,
     )
     transformed_buckets = (
         transform_crush_buckets(

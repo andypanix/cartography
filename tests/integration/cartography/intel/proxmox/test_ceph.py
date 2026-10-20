@@ -363,6 +363,18 @@ def test_crush_map_parse_error_skips_crush_only(neo4j_session, caplog):
 
     # Assert - the rest of Ceph is current, the CRUSH buckets are kept
     assert result == ceph.CephSyncResult(current=True, crush_current=False)
+    # The rule details and device classes keep their last known values
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxCephCrushRule",
+        ["name", "rule_id", "device_class", "failure_domain", "lastupdated"],
+    ) == {
+        ("replicated_rule", 0, None, "host", new_tag),
+        ("ssd_only", 1, "ssd", "rack", new_tag),
+    }
+    assert neo4j_session.run(
+        "MATCH (c:ProxmoxCephCluster) RETURN c.crush_device_classes AS classes",
+    ).single()["classes"] == ["hdd", "ssd"]
     assert "Cannot parse the Ceph CRUSH map" in caplog.text
     assert len(buckets_before) == 4
     assert _bucket_ids(neo4j_session) == buckets_before

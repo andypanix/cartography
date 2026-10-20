@@ -44,7 +44,8 @@ The number of API calls grows with the cluster. For N online nodes and J backup 
 - Storage content makes one listing per active shared storage, plus one per node for each active local storage that can hold backups, ISO images, or container templates. Storage that only holds guest disks is not listed.
 - Storage identity makes one call per active shared storage on Proxmox VE 9, and one call in total on Proxmox VE 8.4.
 - Replication makes `N + 2` calls. A per-job status call is only added when a node returns a job without its state.
-- Storage status makes one call per active storage on each node (`/nodes/{node}/storage/{storage}/status`).
+- Snapshot configuration makes one call per guest snapshot (`/nodes/{node}/{type}/{vmid}/snapshot/{snapname}/config`), so guests with many snapshots add many calls.
+- With `--proxmox-detailed-reads`, storage status makes one call per active storage on each node (`/nodes/{node}/storage/{storage}/status`).
 - Ceph makes one more call for the CRUSH map (`/nodes/{node}/ceph/crush`) when Ceph is installed.
 
 The privileges of these endpoints are the same on Proxmox VE 8.4 and 9.
@@ -59,7 +60,11 @@ The ACME account list is open to every user, but the account details (`/cluster/
 
 The node details need `Sys.Audit` on `/`, or on `/nodes/{node}` for the disk list, package versions, APT repositories, DNS, time and services. The PCI device and mediated device type endpoints accept either `Sys.Audit` or `Sys.Modify`, so `Sys.Audit` is enough. The subscription endpoint is readable by any user, but Proxmox returns the subscription key only with `Sys.Audit`. The privileges are the same on Proxmox VE 8.4 and 9. Cartography never calls `/nodes/{node}/apt/update`, which needs `Sys.Modify`.
 
-For each online node, the node details sync makes 14 API calls, plus one per Proxmox service (`/nodes/{node}/services/{service}/state`), one per local disk (SMART data), one per ZFS pool (pool details) and one per PCI device that supports mediated devices.
+For each online node, the node details sync makes 14 API calls, plus one per local disk (SMART data), one per ZFS pool (pool details) and one per PCI device that supports mediated devices. With `--proxmox-detailed-reads`, it also makes one call per Proxmox service (`/nodes/{node}/services/{service}/state`), about 23 per node.
+
+### Detailed reads
+
+`--proxmox-detailed-reads` adds the per-service state (`/nodes/{node}/services/{service}/state`) and the per-storage status (`/nodes/{node}/storage/{storage}/status`) reads. Proxmox builds these responses with the same code as the service and storage lists, so they return no field the lists lack: they only complete API coverage. They cost about 23 calls per node plus one per active storage per node, and need the same `Sys.Audit` and `Datastore.Audit` privileges as the lists. The option is off by default.
 
 ### Access control endpoints
 
@@ -101,6 +106,7 @@ Without it, Cartography logs the failure and syncs the VMs without guest agent d
 | `--proxmox-verify-ssl` / `--no-proxmox-verify-ssl` | Verify the TLS certificate of the API. Default: enabled. |
 | `--proxmox-enable-guest-agent` | Collect OS, network, filesystem, logged-in user and time zone details from the QEMU guest agent. Increases sync time. Default: disabled. |
 | `--proxmox-request-timeout` | Timeout in seconds for each API request. Default: `60`. |
+| `--proxmox-detailed-reads` | Also read the per-service state and per-storage status endpoints, which return no field the list endpoints lack. Adds about 23 calls per node plus one per active storage per node. Default: disabled. |
 
 ## Run Cartography
 
@@ -116,7 +122,7 @@ cartography \
 
 ## Advanced Configuration
 
-Each guest costs one configuration and one snapshot request, plus one request per snapshot for its configuration (`/nodes/{node}/{type}/{vmid}/snapshot/{snapname}/config`), one status request for a running guest (`/nodes/{node}/{type}/{vmid}/status/current`), one cloud-init request for a VM with a cloud-init drive and one interface request for a running container. With `--proxmox-enable-guest-agent`, a running VM costs six more guest agent requests, three of them only when the agent answers the first three.
+Each guest costs one configuration and one snapshot request, plus one request per snapshot for its configuration (`/nodes/{node}/{type}/{vmid}/snapshot/{snapname}/config`), one status request for a running guest or a stopped guest that HA manages (`/nodes/{node}/{type}/{vmid}/status/current`), one cloud-init request for a VM with a cloud-init drive and one interface request for a running container. With `--proxmox-enable-guest-agent`, a running VM costs six more guest agent requests, three of them only when the agent answers the first three.
 
 Cartography tries an API request up to three times, with exponential backoff, when it times out, cannot connect, or gets a 429, 502, 503 or 504 response.
 

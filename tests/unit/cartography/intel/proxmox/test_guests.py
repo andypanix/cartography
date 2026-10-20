@@ -366,6 +366,35 @@ def test_collect_guest_details_stopped_guests_skip_runtime_calls():
     ]
 
 
+def test_collect_guest_details_reads_status_of_stopped_ha_guest():
+    # A stopped guest that HA manages, here in the error state, still gets its
+    # HA status; a stopped guest without HA does not (see the test above).
+    responses = _responses()
+    responses["/nodes/pve/qemu/100/status/current"] = {
+        "status": "stopped",
+        "ha": {"managed": 1, "state": "error", "group": "prod-ha"},
+    }
+    client = RecordingClient(responses)
+    vm = _vm(100, "qemu", "stopped")
+
+    guests.collect_guest_details(
+        client,
+        vm,
+        MOCK_GUEST_CONFIG[100],
+        CLUSTER_ID,
+        guests.index_guest_resources(
+            [{"type": "qemu", "vmid": 100, "node": "pve", "hastate": "error"}],
+        ),
+        enable_guest_agent=False,
+    )
+
+    assert client.calls[0] == "/nodes/pve/qemu/100/status/current"
+    assert vm["hastate"] == "error"
+    assert vm["ha_managed"] is True
+    assert vm["ha_state"] == "error"
+    assert vm["ha_group"] == "prod-ha"
+
+
 def test_collect_guest_details_reads_status_of_running_vm():
     client = RecordingClient(_responses())
     # The list already has the running machine; the status fills the rest.

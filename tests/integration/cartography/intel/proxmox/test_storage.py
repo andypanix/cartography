@@ -243,6 +243,7 @@ def test_storage_status_detail_fills_gaps_and_skips_errors(neo4j_session, caplog
             TEST_CLUSTER_ID,
             TEST_UPDATE_TAG,
             {"UPDATE_TAG": TEST_UPDATE_TAG, "CLUSTER_ID": TEST_CLUSTER_ID},
+            detailed_reads=True,
         )
 
     # Assert - inactive storage is not read; every storage is still loaded
@@ -260,4 +261,56 @@ def test_storage_status_detail_fills_gaps_and_skips_errors(neo4j_session, caplog
     assert status_map["node1"][0]["type"] == "dir"
     assert "Could not read the status of storage local-lvm on node node1" in (
         caplog.text
+    )
+
+
+def test_storage_status_detail_not_read_without_detailed_reads(neo4j_session):
+    """
+    Without --proxmox-detailed-reads, the per-storage status is not read and
+    the per-node list values are used as they are.
+    """
+    # Arrange
+    neo4j_session.run("MATCH (n) DETACH DELETE n")
+    neo4j_session.run("MERGE (:ProxmoxCluster {id: $id})", id=TEST_CLUSTER_ID)
+    proxmox = MagicMock()
+    proxmox.nodes.get.return_value = [{"node": "node1"}]
+    node_list = [
+        {"storage": "local", "type": "dir", "active": 1, "total": 100},
+    ]
+
+    # Act
+    with (
+        patch.object(
+            cartography.intel.proxmox.storage,
+            "get_storage",
+            return_value=MOCK_STORAGE_DATA,
+        ),
+        patch.object(
+            cartography.intel.proxmox.storage,
+            "get_storage_status",
+            return_value=node_list,
+        ),
+        patch.object(
+            cartography.intel.proxmox.storage,
+            "get_storage_status_detail",
+        ) as detail_mock,
+        patch.object(
+            cartography.intel.proxmox.storage,
+            "get_shared_storage_identities",
+            return_value={},
+        ),
+    ):
+        status_map = storage_sync(
+            neo4j_session,
+            proxmox,
+            TEST_CLUSTER_ID,
+            TEST_UPDATE_TAG,
+            {"UPDATE_TAG": TEST_UPDATE_TAG, "CLUSTER_ID": TEST_CLUSTER_ID},
+        )
+
+    # Assert
+    detail_mock.assert_not_called()
+    assert status_map == {"node1": node_list}
+    assert ("local", 100) in check_nodes(
+        neo4j_session, "ProxmoxStorage", ["name", "total"]
     )
