@@ -46,6 +46,11 @@ def _getters(nodes: list[dict[str, Any]]) -> list[tuple[Any, str, Any]]:
         (node_details, "get_node_dns", data.MOCK_NODE_DNS),
         (node_details, "get_node_time", data.MOCK_NODE_TIME),
         (node_details, "get_node_services", data.MOCK_SERVICES),
+        (
+            node_details,
+            "get_node_service_state",
+            lambda client, node, service: data.MOCK_SERVICE_STATES[service],
+        ),
         (node_details, "get_pci_devices", data.MOCK_PCI_DEVICES),
         (
             node_details,
@@ -265,8 +270,12 @@ def test_sync_node_details(neo4j_session):
         ["name", "state", "active_state", "unit_state"],
     ) == {
         ("pveproxy", "running", "active", "enabled"),
-        ("corosync", "dead", "inactive", "disabled"),
+        # The state endpoint is read after the list and has the newer values
+        ("corosync", "running", "active", "enabled"),
     }
+    assert sorted(
+        c.args[2] for c in mocks["get_node_service_state"].call_args_list
+    ) == ["corosync", "pveproxy"]
     assert check_nodes(
         neo4j_session,
         "ProxmoxPCIDevice",
@@ -338,6 +347,32 @@ def test_smart_error_keeps_disk_without_smart_values(neo4j_session):
     # The rest of the node is synced
     assert check_nodes(neo4j_session, "ProxmoxZFSPool", ["id"])
     assert check_nodes(neo4j_session, "ProxmoxPCIDevice", ["id"])
+
+
+def test_service_state_error_keeps_service_list_values(neo4j_session, caplog):
+    # Arrange
+    _seed(neo4j_session)
+
+    def state(client, node, service):
+        if service == "corosync":
+            raise _api_error(500)
+        return data.MOCK_SERVICE_STATES[service]
+
+    # Act
+    _sync(
+        neo4j_session,
+        TEST_UPDATE_TAG,
+        [{"node": "node1", "status": "online"}],
+        {"get_node_service_state": state},
+    )
+
+    # Assert - corosync keeps the list values, and the node is still synced
+    assert check_nodes(neo4j_session, "ProxmoxService", ["name", "state"]) == {
+        ("pveproxy", "running"),
+        ("corosync", "dead"),
+    }
+    assert check_nodes(neo4j_session, "ProxmoxPhysicalDisk", ["id"])
+    assert "Could not read the state of service corosync" in caplog.text
 
 
 def test_mdev_error_keeps_pci_device_without_mdev_types(neo4j_session):

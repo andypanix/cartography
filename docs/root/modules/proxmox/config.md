@@ -23,9 +23,9 @@ Grant the built-in `PVEAuditor` role on path `/` with propagation enabled. It co
 
 | Privilege | Used for |
 | --- | --- |
-| `Sys.Audit` | Cluster status and options, Corosync configuration and QDevice status, nodes, node networks, certificates, users, API tokens, second factors, realms, realm sync jobs, groups, roles, ACLs, HA groups, resources, rules and status, cluster and node firewall (rules, options, security groups, aliases, IP sets), Ceph (OSD flags, OSD details, and OSD volumes need `Sys.Audit`; the other Ceph endpoints accept `Sys.Audit` or `Datastore.Audit`), guests and volumes included in backup jobs, guests not covered by backups, all fields of the node vzdump defaults, metric servers, node disks, SMART data, ZFS, LVM, managed directories, package versions, APT repositories, node options, DNS, time, services, PCI devices and mediated device types |
-| `VM.Audit` | VM and container configuration, snapshots, cloud-init values, container IP addresses, VM and container firewall (rules, options, aliases, IP sets), backup jobs, replication jobs and their state |
-| `Datastore.Audit` | Storage backends, storage content (backup archives, ISO images, container templates), storage identity (Proxmox VE 9), node vzdump defaults (on the default backup storage) |
+| `Sys.Audit` | Cluster status and options, Corosync configuration and QDevice status, nodes, node networks, certificates, users, API tokens, second factors, realms, realm sync jobs, groups, roles, ACLs, HA groups, resources, rules and status, cluster and node firewall (rules, options, security groups, aliases, IP sets), Ceph (OSD flags, OSD details, and OSD volumes need `Sys.Audit`; the other Ceph endpoints, including the CRUSH map, accept `Sys.Audit` or `Datastore.Audit`), guests and volumes included in backup jobs, guests not covered by backups, all fields of the node vzdump defaults, metric servers, node disks, SMART data, ZFS, LVM, managed directories, package versions, APT repositories, node options, DNS, time, services, PCI devices and mediated device types |
+| `VM.Audit` | VM and container configuration, status, snapshots and their configuration (which also accepts `VM.Snapshot` or `VM.Snapshot.Rollback`), cloud-init values, container IP addresses, VM and container firewall (rules, options, aliases, IP sets), backup jobs, replication jobs and their state |
+| `Datastore.Audit` | Storage backends, storage status on each node (which also accepts `Datastore.AllocateSpace`), storage content (backup archives, ISO images, container templates), storage identity (Proxmox VE 9), node vzdump defaults (on the default backup storage) |
 | `Pool.Audit` | Resource pools, including nested pools. Cartography lists only the pools where the user has `Pool.Audit`. |
 | `SDN.Audit` | SDN zones, VNets, subnets, VNet firewall, controllers, IPAM and DNS plugins, and their status on each node; on Proxmox VE 9 also fabrics, prefix lists and route maps. Listing fabric nodes also needs `Sys.Audit` on `/nodes/<node>`. |
 | `Mapping.Audit` | PCI, USB, and directory resource mappings; notification targets, endpoints, and matchers on `/mapping/notifications`; custom CPU models (Proxmox VE 9 only; skipped on Proxmox VE 8.4) |
@@ -44,6 +44,10 @@ The number of API calls grows with the cluster. For N online nodes and J backup 
 - Storage content makes one listing per active shared storage, plus one per node for each active local storage that can hold backups, ISO images, or container templates. Storage that only holds guest disks is not listed.
 - Storage identity makes one call per active shared storage on Proxmox VE 9, and one call in total on Proxmox VE 8.4.
 - Replication makes `N + 2` calls. A per-job status call is only added when a node returns a job without its state.
+- Storage status makes one call per active storage on each node (`/nodes/{node}/storage/{storage}/status`).
+- Ceph makes one more call for the CRUSH map (`/nodes/{node}/ceph/crush`) when Ceph is installed.
+
+The privileges of these endpoints are the same on Proxmox VE 8.4 and 9.
 
 When a storage content listing fails, Cartography logs a warning with the node and storage and goes on with the rest of the sync. The backup archives, ISO images and container templates of a storage that is not read in a run, because the listing failed or the storage is inactive or disabled, are kept as seen in the last successful listing. Their `last_listed` property keeps the time of that listing, in seconds since the UNIX epoch, while `lastupdated` moves on with each sync, so `last_listed` shows how old the kept content is. An offline Proxmox Backup Server therefore does not make its guests look unbacked. Content of a storage that no node reports any more, for example after it is removed from the configuration, is deleted. A failed storage identity read is skipped in the same way, storage by storage.
 
@@ -55,7 +59,7 @@ The ACME account list is open to every user, but the account details (`/cluster/
 
 The node details need `Sys.Audit` on `/`, or on `/nodes/{node}` for the disk list, package versions, APT repositories, DNS, time and services. The PCI device and mediated device type endpoints accept either `Sys.Audit` or `Sys.Modify`, so `Sys.Audit` is enough. The subscription endpoint is readable by any user, but Proxmox returns the subscription key only with `Sys.Audit`. The privileges are the same on Proxmox VE 8.4 and 9. Cartography never calls `/nodes/{node}/apt/update`, which needs `Sys.Modify`.
 
-For each online node, the node details sync makes 14 API calls, plus one per local disk (SMART data), one per ZFS pool (pool details) and one per PCI device that supports mediated devices.
+For each online node, the node details sync makes 14 API calls, plus one per Proxmox service (`/nodes/{node}/services/{service}/state`), one per local disk (SMART data), one per ZFS pool (pool details) and one per PCI device that supports mediated devices.
 
 ### Access control endpoints
 
@@ -112,7 +116,7 @@ cartography \
 
 ## Advanced Configuration
 
-Each guest costs one configuration and one snapshot request, plus one cloud-init request for a VM with a cloud-init drive and one interface request for a running container. With `--proxmox-enable-guest-agent`, a running VM costs six more guest agent requests, three of them only when the agent answers the first three.
+Each guest costs one configuration and one snapshot request, plus one request per snapshot for its configuration (`/nodes/{node}/{type}/{vmid}/snapshot/{snapname}/config`), one status request for a running guest (`/nodes/{node}/{type}/{vmid}/status/current`), one cloud-init request for a VM with a cloud-init drive and one interface request for a running container. With `--proxmox-enable-guest-agent`, a running VM costs six more guest agent requests, three of them only when the agent answers the first three.
 
 Cartography tries an API request up to three times, with exponential backoff, when it times out, cannot connect, or gets a 429, 502, 503 or 504 response.
 

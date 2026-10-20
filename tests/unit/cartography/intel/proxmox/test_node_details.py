@@ -2,6 +2,8 @@
 Unit tests for the Proxmox node details transforms.
 """
 
+from proxmoxer.core import ResourceException
+
 from cartography.intel.proxmox import node_details
 from tests.data.proxmox import node_details as data
 
@@ -334,3 +336,37 @@ def test_transform_pci_devices():
     assert nic["mdev"] is False
     assert nic["mdev_types"] is None
     assert nic["mdev_available"] is None
+
+
+def test_merge_service_states_prefers_state_values(monkeypatch):
+    calls = []
+
+    def fake_state(client, node, service):
+        calls.append((node, service))
+        return data.MOCK_SERVICE_STATES[service]
+
+    monkeypatch.setattr(node_details, "get_node_service_state", fake_state)
+
+    merged = node_details.merge_service_states(None, NODE, data.MOCK_SERVICES)
+
+    assert calls == [(NODE, "pveproxy"), (NODE, "corosync")]
+    corosync = merged[1]
+    assert corosync["state"] == "running"
+    assert corosync["active-state"] == "active"
+    assert corosync["desc"] == "Corosync Cluster Engine"
+
+
+def test_merge_service_states_keeps_list_entry_on_error(monkeypatch, caplog):
+    def fake_state(client, node, service):
+        if service == "corosync":
+            raise ResourceException(500, "Internal Server Error", "unit not found")
+        return {"service": service, "state": "", "desc": None}
+
+    monkeypatch.setattr(node_details, "get_node_service_state", fake_state)
+
+    merged = node_details.merge_service_states(None, NODE, data.MOCK_SERVICES)
+
+    # Empty state values do not overwrite the list values
+    assert merged[0] == data.MOCK_SERVICES[0]
+    assert merged[1] == data.MOCK_SERVICES[1]
+    assert "Could not read the state of service corosync" in caplog.text

@@ -250,6 +250,105 @@ MOCK_CEPH_RULES = [
     {"name": "ssd_only"},
 ]
 
+# /nodes/{node}/ceph/crush: the CRUSH map as `crushtool -d` writes it on
+# Ceph Squid, with a rack level between the root and the hosts, shadow class
+# IDs, a device-class rule, and a choose_args section.
+MOCK_CEPH_CRUSH_MAP = """# begin crush map
+tunable choose_local_tries 0
+tunable choose_local_fallback_tries 0
+tunable choose_total_tries 50
+tunable chooseleaf_descend_once 1
+tunable chooseleaf_vary_r 1
+tunable chooseleaf_stable 1
+tunable straw_calc_version 1
+tunable allowed_bucket_algs 54
+
+# devices
+device 0 osd.0 class ssd
+device 1 osd.1 class hdd
+
+# types
+type 0 osd
+type 1 host
+type 2 chassis
+type 3 rack
+type 4 row
+type 5 pdu
+type 6 pod
+type 7 room
+type 8 datacenter
+type 9 zone
+type 10 region
+type 11 root
+
+# buckets
+host node1 {
+\tid -3\t\t# do not change unnecessarily
+\tid -4 class ssd\t\t# do not change unnecessarily
+\tid -7 class hdd\t\t# do not change unnecessarily
+\t# weight 0.90000
+\talg straw2
+\thash 0\t# rjenkins1
+\titem osd.0 weight 0.90000
+}
+host node2 {
+\tid -5\t\t# do not change unnecessarily
+\tid -6 class ssd\t\t# do not change unnecessarily
+\tid -8 class hdd\t\t# do not change unnecessarily
+\t# weight 0.90000
+\talg straw2
+\thash 0\t# rjenkins1
+\titem osd.1 weight 0.90000
+}
+rack rack1 {
+\tid -9\t\t# do not change unnecessarily
+\tid -10 class ssd\t\t# do not change unnecessarily
+\tid -11 class hdd\t\t# do not change unnecessarily
+\t# weight 1.80000
+\talg straw2
+\thash 0\t# rjenkins1
+\titem node1 weight 0.90000
+\titem node2 weight 0.90000
+}
+root default {
+\tid -1\t\t# do not change unnecessarily
+\tid -2 class ssd\t\t# do not change unnecessarily
+\tid -12 class hdd\t\t# do not change unnecessarily
+\t# weight 1.80000
+\talg straw2
+\thash 0\t# rjenkins1
+\titem rack1 weight 1.80000
+}
+
+# rules
+rule replicated_rule {
+\tid 0
+\ttype replicated
+\tstep take default
+\tstep chooseleaf firstn 0 type host
+\tstep emit
+}
+rule ssd_only {
+\tid 1
+\ttype replicated
+\tstep take default class ssd
+\tstep chooseleaf firstn 0 type rack
+\tstep emit
+}
+
+# choose_args
+choose_args 18446744073709551615 {
+  {
+    bucket_id -1
+    weight_set [
+      [ 1.800 ]
+    ]
+  }
+}
+
+# end crush map
+"""
+
 MOCK_CEPH_POOLS = [
     {
         "pool": 1,

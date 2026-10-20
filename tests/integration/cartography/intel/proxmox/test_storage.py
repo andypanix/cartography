@@ -188,3 +188,76 @@ def test_storage_node_relationships(mock_get_storage, neo4j_session):
         for storage in ("local", "local-lvm", "nfs-backup")
         for node in ("node1", "node2")
     }
+
+
+def test_storage_status_detail_fills_gaps_and_skips_errors(neo4j_session, caplog):
+    """
+    The per-storage status of each active storage fills only what the per-node
+    list leaves unset, and a storage whose status fails keeps its list values.
+    """
+    # Arrange
+    neo4j_session.run("MATCH (n) DETACH DELETE n")
+    neo4j_session.run("MERGE (:ProxmoxCluster {id: $id})", id=TEST_CLUSTER_ID)
+    proxmox = MagicMock()
+    proxmox.nodes.get.return_value = [{"node": "node1"}]
+    node_list = [
+        # The list lacks the sizes of local
+        {"storage": "local", "type": "dir", "active": 1},
+        {"storage": "local-lvm", "type": "lvmthin", "active": 1, "total": 500},
+        {"storage": "nfs-backup", "type": "nfs", "active": 0},
+    ]
+
+    def detail(_client, node, name):
+        if name == "local-lvm":
+            raise cartography.intel.proxmox.storage.ResourceException(
+                500, "Internal Server Error", "timeout"
+            )
+        return {"type": "dir", "active": 1, "total": 100, "used": 40, "avail": 60}
+
+    # Act
+    with (
+        patch.object(
+            cartography.intel.proxmox.storage,
+            "get_storage",
+            return_value=MOCK_STORAGE_DATA,
+        ),
+        patch.object(
+            cartography.intel.proxmox.storage,
+            "get_storage_status",
+            return_value=node_list,
+        ),
+        patch.object(
+            cartography.intel.proxmox.storage,
+            "get_storage_status_detail",
+            side_effect=detail,
+        ) as detail_mock,
+        patch.object(
+            cartography.intel.proxmox.storage,
+            "get_shared_storage_identities",
+            return_value={},
+        ),
+    ):
+        status_map = storage_sync(
+            neo4j_session,
+            proxmox,
+            TEST_CLUSTER_ID,
+            TEST_UPDATE_TAG,
+            {"UPDATE_TAG": TEST_UPDATE_TAG, "CLUSTER_ID": TEST_CLUSTER_ID},
+        )
+
+    # Assert - inactive storage is not read; every storage is still loaded
+    assert [c.args[1:] for c in detail_mock.call_args_list] == [
+        ("node1", "local"),
+        ("node1", "local-lvm"),
+    ]
+    assert check_nodes(
+        neo4j_session, "ProxmoxStorage", ["name", "total", "used", "available"]
+    ) == {
+        ("local", 100, 40, 60),
+        ("local-lvm", 500, 0, 0),
+        ("nfs-backup", 0, 0, 0),
+    }
+    assert status_map["node1"][0]["type"] == "dir"
+    assert "Could not read the status of storage local-lvm on node node1" in (
+        caplog.text
+    )

@@ -8,6 +8,8 @@ from typing import Any
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from proxmoxer.core import ResourceException
+
 import cartography.intel.proxmox.compute as compute
 import cartography.intel.proxmox.guests as guests
 from cartography.graph.job import GraphJob
@@ -19,6 +21,8 @@ from tests.data.proxmox.guests import MOCK_CUSTOM_CPU_MODELS
 from tests.data.proxmox.guests import MOCK_GUEST_CONFIG
 from tests.data.proxmox.guests import MOCK_GUEST_LIST
 from tests.data.proxmox.guests import MOCK_GUEST_RESOURCES
+from tests.data.proxmox.guests import MOCK_GUEST_STATUS
+from tests.data.proxmox.guests import MOCK_SNAPSHOT_CONFIGS
 from tests.data.proxmox.guests import MOCK_SNAPSHOTS
 from tests.data.proxmox.guests import MOCK_SSH_FINGERPRINT
 from tests.integration.util import check_nodes
@@ -44,8 +48,20 @@ def _proxmox_client() -> MagicMock:
     return proxmox
 
 
-def _sync(neo4j_session, update_tag: int, snapshots: dict[int, list] | None = None):
+def _snapshot_config(_c: Any, _n: str, vmid: int, _t: str, name: str) -> dict:
+    return MOCK_SNAPSHOT_CONFIGS[vmid][name]
+
+
+def _sync(
+    neo4j_session,
+    update_tag: int,
+    snapshots: dict[int, list] | None = None,
+    guest_status: Any = None,
+    snapshot_config: Any = None,
+):
     snapshots = MOCK_SNAPSHOTS if snapshots is None else snapshots
+    guest_status = guest_status or (lambda c, n, vmid, t: MOCK_GUEST_STATUS[vmid])
+    snapshot_config = snapshot_config or _snapshot_config
     proxmox = _proxmox_client()
     patches: list[tuple[Any, str, Any]] = [
         (
@@ -66,6 +82,8 @@ def _sync(neo4j_session, update_tag: int, snapshots: dict[int, list] | None = No
         (guests, "get_guest_resources", lambda c: MOCK_GUEST_RESOURCES),
         (guests, "get_custom_cpu_models", lambda c: MOCK_CUSTOM_CPU_MODELS),
         (guests, "get_guest_snapshots", lambda c, n, vmid, t: snapshots[vmid]),
+        (guests, "get_snapshot_config", snapshot_config),
+        (guests, "get_guest_status", guest_status),
         (guests, "get_vm_cloudinit", lambda c, n, vmid: MOCK_CLOUDINIT[vmid]),
         (
             guests,
@@ -87,6 +105,49 @@ def _sync(neo4j_session, update_tag: int, snapshots: dict[int, list] | None = No
             {"UPDATE_TAG": update_tag, "CLUSTER_ID": TEST_CLUSTER_ID},
             enable_guest_agent=True,
         )
+
+
+def vm_support(neo4j_session) -> list[str]:
+    return neo4j_session.run(
+        "MATCH (v:ProxmoxVM {id: $id}) RETURN v.proxmox_support AS s", id=VM
+    ).single()["s"]
+
+
+def test_guest_status_and_snapshot_config_errors_are_skipped(neo4j_session, caplog):
+    # Arrange
+    neo4j_session.run("MATCH (n) DETACH DELETE n")
+    neo4j_session.run("MERGE (:ProxmoxCluster {id: $id})", id=TEST_CLUSTER_ID)
+
+    def failing_status(_c: Any, _n: str, vmid: int, _t: str) -> dict:
+        if vmid == 100:
+            raise ResourceException(500, "Internal Server Error", "QMP timeout")
+        return MOCK_GUEST_STATUS[vmid]
+
+    def failing_config(c: Any, n: str, vmid: int, t: str, name: str) -> dict:
+        if name == "base":
+            raise ResourceException(403, "Forbidden", "Permission check failed")
+        return _snapshot_config(c, n, vmid, t, name)
+
+    # Act
+    _sync(
+        neo4j_session,
+        TEST_UPDATE_TAG,
+        guest_status=failing_status,
+        snapshot_config=failing_config,
+    )
+
+    # Assert - every guest and snapshot is synced, without the failed values
+    assert check_nodes(neo4j_session, "ProxmoxVM", ["id", "ha_managed"]) == {
+        (VM, None),
+        (CT, False),
+    }
+    assert check_nodes(neo4j_session, "ProxmoxSnapshot", ["name", "config_cores"]) == {
+        ("before-upgrade", 2),
+        ("after-upgrade", 4),
+        ("base", None),
+    }
+    assert "Could not read the status of qemu guest 100" in caplog.text
+    assert "Could not read the configuration of snapshot base" in caplog.text
 
 
 def test_sync_guest_details(neo4j_session):
@@ -157,6 +218,45 @@ def test_sync_guest_details(neo4j_session):
         "id",
         "HAS_PARENT",
     ) == {(f"{VM}/snapshot/after-upgrade", f"{VM}/snapshot/before-upgrade")}
+
+    # Assert - configuration facts saved with each snapshot, never secrets
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxSnapshot",
+        [
+            "name",
+            "config_cores",
+            "config_memory",
+            "config_ostype",
+            "config_cpu_type",
+            "config_disk_count",
+            "config_nic_count",
+        ],
+    ) == {
+        ("before-upgrade", 2, "4096", "l26", "x86-64-v2-AES", 1, 1),
+        ("after-upgrade", 4, "8192", "l26", "custom-avx", 2, 2),
+        ("base", 1, 512, "debian", None, 2, 1),
+    }
+    leaked = neo4j_session.run(
+        """
+        MATCH (s:ProxmoxSnapshot)
+        UNWIND keys(s) AS key
+        WITH s, key WHERE toString(s[key]) CONTAINS '$5$secret'
+        RETURN count(*) AS n
+        """,
+    ).single()["n"]
+    assert leaked == 0
+
+    # Assert - status of the running guests: HA, display, QEMU features
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxVM",
+        ["id", "ha_managed", "ha_state", "spice", "clipboard", "pbs_library_version"],
+    ) == {
+        (VM, True, "started", True, "vnc", "1.4.1 (UNKNOWN)"),
+        (CT, False, None, None, None, None),
+    }
+    assert "pbs-dirty-bitmap" in vm_support(neo4j_session)
 
     # Assert - container IP addresses on its configured interface
     assert check_nodes(

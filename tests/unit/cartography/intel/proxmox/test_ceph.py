@@ -80,6 +80,7 @@ def test_transform_ceph_cluster():
         "muted_health_checks": ["POOL_NO_REDUNDANCY"],
         "flags": ["noout"],
         "ceph_versions": ["19.2.0", "19.2.1"],
+        "crush_device_classes": None,
     }
 
 
@@ -260,7 +261,7 @@ def test_sync_skips_when_ceph_not_installed(monkeypatch):
     current = ceph.sync(MagicMock(), MagicMock(), CLUSTER_ID, 1, {})
 
     # Assert - each online node was asked once, and the cleanup may run
-    assert current is True
+    assert current == ceph.CephSyncResult(current=True, crush_current=True)
     assert [c.args[1] for c in node_status.call_args_list] == ["node1", "node2"]
     get_metadata.assert_not_called()
 
@@ -279,7 +280,7 @@ def test_sync_keeps_data_when_ceph_cannot_be_read(monkeypatch):
     current = ceph.sync(MagicMock(), MagicMock(), CLUSTER_ID, 1, {})
 
     # Assert - absence is not confirmed, so the cleanup must be skipped
-    assert current is False
+    assert current == ceph.CephSyncResult(current=False, crush_current=False)
     get_metadata.assert_not_called()
 
 
@@ -317,7 +318,9 @@ def test_sync_keeps_data_without_online_nodes(monkeypatch):
     )
 
     # Act and assert
-    assert ceph.sync(MagicMock(), MagicMock(), CLUSTER_ID, 1, {}) is False
+    assert ceph.sync(MagicMock(), MagicMock(), CLUSTER_ID, 1, {}) == (
+        ceph.CephSyncResult(current=False, crush_current=False)
+    )
 
 
 def test_flags_from_osd_tree():
