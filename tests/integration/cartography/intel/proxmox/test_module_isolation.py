@@ -9,11 +9,20 @@ import pytest
 
 import cartography.intel.proxmox
 import cartography.intel.proxmox.access
+import cartography.intel.proxmox.ceph
 import cartography.intel.proxmox.cluster
+import cartography.intel.proxmox.compute
+import cartography.intel.proxmox.firewall
+import cartography.intel.proxmox.mapping
 import cartography.intel.proxmox.pool
+import cartography.intel.proxmox.sdn
 import cartography.intel.proxmox.storage
 import cartography.intel.proxmox.storage_content
+from cartography.graph.job import GraphJob
 from cartography.intel.proxmox import ProxmoxSyncError
+from cartography.models.proxmox.compute import ProxmoxVMSchema
+from cartography.models.proxmox.firewall import ProxmoxFirewallIPSetSchema
+from cartography.models.proxmox.firewall import ProxmoxFirewallRuleSchema
 from tests.data.proxmox.access import MOCK_ACL_DATA
 from tests.data.proxmox.pool import MOCK_POOL_DETAILS
 from tests.integration.cartography.intel.proxmox.test_relationship_cleanup import _rels
@@ -22,6 +31,8 @@ from tests.integration.cartography.intel.proxmox.test_relationship_cleanup impor
 )
 from tests.integration.cartography.intel.proxmox.test_relationship_cleanup import _wipe
 from tests.integration.util import check_nodes
+
+REAL_FROM_NODE_SCHEMA = GraphJob.from_node_schema
 
 POOL_MEMBERS = {
     ("test-cluster/development", "test-cluster/node1/qemu/101"),
@@ -144,3 +155,186 @@ def test_cluster_failure_aborts_the_sync(neo4j_session):
 
     storage_sync.assert_not_called()
     assert check_nodes(neo4j_session, "ProxmoxNode", ["id"]) == set()
+
+
+def _record_cleanups(cleaned: list[type], failing: type | None = None):
+    """
+    Patch the node schema cleanup so that it records each schema it cleans,
+    and raises for the failing schema.
+    """
+
+    def from_node_schema(schema, common_job_parameters):
+        if failing is not None and isinstance(schema, failing):
+            raise RuntimeError(f"cleanup of {failing.__name__} failed")
+        cleaned.append(type(schema))
+        return REAL_FROM_NODE_SCHEMA(schema, common_job_parameters)
+
+    return patch.object(GraphJob, "from_node_schema", side_effect=from_node_schema)
+
+
+def _module_sync_metadata_ids(neo4j_session) -> set[str]:
+    result = neo4j_session.run("MATCH (n:ModuleSyncMetadata) RETURN n.id AS id")
+    return {record["id"] for record in result}
+
+
+def test_failed_sync_does_not_write_sync_metadata(neo4j_session):
+    """
+    The sync metadata records a complete sync, so a sync in which a module
+    failed does not write it.
+    """
+    _wipe(neo4j_session)
+
+    with (
+        patch.object(
+            cartography.intel.proxmox.pool,
+            "sync",
+            side_effect=RuntimeError("pool API down"),
+        ),
+        pytest.raises(ProxmoxSyncError, match="modules: pool$"),
+    ):
+        _run_ingestion(neo4j_session, 1, MOCK_POOL_DETAILS, MOCK_ACL_DATA)
+
+    assert _module_sync_metadata_ids(neo4j_session) == set()
+
+    # A complete sync writes it
+    _run_ingestion(neo4j_session, 2, MOCK_POOL_DETAILS, MOCK_ACL_DATA)
+    assert _module_sync_metadata_ids(neo4j_session) == {
+        "ProxmoxCluster_test-cluster_ProxmoxCluster",
+    }
+
+
+def test_compute_failure_skips_the_mapping_sync(neo4j_session):
+    """
+    Mappings link to the VMs returned by the compute sync, so they are skipped
+    and reported failed when the compute sync fails.
+    """
+    _wipe(neo4j_session)
+
+    with (
+        patch.object(
+            cartography.intel.proxmox.compute,
+            "sync",
+            side_effect=RuntimeError("compute API down"),
+        ),
+        patch.object(cartography.intel.proxmox.mapping, "sync") as mapping_sync,
+        pytest.raises(ProxmoxSyncError, match="modules: compute, mapping$"),
+    ):
+        _run_ingestion(neo4j_session, 1, MOCK_POOL_DETAILS, MOCK_ACL_DATA)
+
+    mapping_sync.assert_not_called()
+
+
+@pytest.mark.parametrize("failing_module", ["firewall", "sdn"])
+def test_firewall_or_sdn_failure_skips_the_rule_cleanup(
+    neo4j_session,
+    caplog,
+    failing_module,
+):
+    """
+    Firewall rules are loaded by both the firewall and the SDN sync, so their
+    cleanup is skipped when either of them fails.
+    """
+    _wipe(neo4j_session)
+    cleaned: list[type] = []
+
+    with (
+        patch.object(
+            getattr(cartography.intel.proxmox, failing_module),
+            "sync",
+            side_effect=RuntimeError(f"{failing_module} API down"),
+        ),
+        _record_cleanups(cleaned),
+        caplog.at_level(logging.WARNING, logger="cartography.intel.proxmox"),
+        pytest.raises(ProxmoxSyncError, match=f"modules: {failing_module}$"),
+    ):
+        _run_ingestion(neo4j_session, 1, MOCK_POOL_DETAILS, MOCK_ACL_DATA)
+
+    assert ProxmoxFirewallRuleSchema not in cleaned
+    assert ProxmoxVMSchema in cleaned
+    # The other firewall cleanups run only when the firewall sync succeeded
+    assert (ProxmoxFirewallIPSetSchema in cleaned) is (failing_module == "sdn")
+    assert (
+        "Skipping cleanup of Proxmox firewall and sdn because the "
+        f"{failing_module} sync failed"
+    ) in caplog.text
+
+
+def test_failing_rule_cleanup_is_reported_as_a_cleanup_failure(
+    neo4j_session,
+    caplog,
+):
+    """
+    When the firewall rule cleanup raises, the later firewall cleanups are
+    skipped and their log names the failed cleanup, not a failed module sync.
+    """
+    _wipe(neo4j_session)
+    cleaned: list[type] = []
+
+    with (
+        _record_cleanups(cleaned, failing=ProxmoxFirewallRuleSchema),
+        caplog.at_level(logging.WARNING, logger="cartography.intel.proxmox"),
+        pytest.raises(ProxmoxSyncError, match="modules: firewall$"),
+    ):
+        _run_ingestion(neo4j_session, 1, MOCK_POOL_DETAILS, MOCK_ACL_DATA)
+
+    assert ProxmoxFirewallIPSetSchema not in cleaned
+    assert (
+        "Skipping cleanup of Proxmox firewall because the firewall cleanup failed"
+    ) in caplog.text
+    assert "Proxmox firewall cleanup failed" in caplog.text
+    assert "firewall sync failed" not in caplog.text
+
+
+def test_raising_ceph_sync_skips_the_ceph_cleanup(neo4j_session, caplog):
+    """
+    A Ceph sync that raises skips the Ceph cleanup and is reported failed,
+    unlike a cluster without Ceph, which only logs that Ceph could not be read.
+    """
+    _wipe(neo4j_session)
+
+    with (
+        patch.object(
+            cartography.intel.proxmox.ceph,
+            "sync",
+            side_effect=RuntimeError("ceph API down"),
+        ),
+        patch.object(cartography.intel.proxmox.ceph, "cleanup") as ceph_cleanup,
+        caplog.at_level(logging.WARNING, logger="cartography.intel.proxmox"),
+        pytest.raises(ProxmoxSyncError, match="modules: ceph$"),
+    ):
+        _run_ingestion(neo4j_session, 1, MOCK_POOL_DETAILS, MOCK_ACL_DATA)
+
+    ceph_cleanup.assert_not_called()
+    assert "the Ceph data could not be read" not in caplog.text
+
+
+def test_analysis_failure_is_reported_with_the_other_failed_modules(
+    neo4j_session,
+    caplog,
+):
+    """
+    A failing effective permissions analysis does not hide the modules that
+    failed before it: the final error names all of them.
+    """
+    _wipe(neo4j_session)
+
+    with (
+        patch.object(
+            cartography.intel.proxmox.pool,
+            "sync",
+            side_effect=RuntimeError("pool API down"),
+        ),
+        patch.object(
+            cartography.intel.proxmox,
+            "run_typed_analysis_job",
+            side_effect=RuntimeError("analysis failed"),
+        ),
+        pytest.raises(
+            ProxmoxSyncError,
+            match="modules: pool, effective permissions$",
+        ),
+        caplog.at_level(logging.ERROR, logger="cartography.intel.proxmox"),
+    ):
+        _run_ingestion(neo4j_session, 1, MOCK_POOL_DETAILS, MOCK_ACL_DATA)
+
+    assert "Proxmox effective permissions analysis failed" in caplog.text

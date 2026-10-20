@@ -151,6 +151,7 @@ class _ModuleRunner:
         step: Callable[..., Any],
         *args: Any,
         requires: Iterable[str] = (),
+        action: str = "sync",
         **kwargs: Any,
     ) -> Any:
         """
@@ -161,6 +162,8 @@ class _ModuleRunner:
         :param args: Positional arguments for the step
         :param requires: Modules whose output this step needs; when one of them
             failed, the step is not run and the module is marked failed
+        :param action: What the step does, used in logs: "sync", "cleanup" or
+            "analysis"
         :param kwargs: Keyword arguments for the step
         :return: The step result, or None when the step failed or was skipped
         """
@@ -169,8 +172,9 @@ class _ModuleRunner:
         missing = [dependency for dependency in requires if dependency in self.failed]
         if missing:
             logger.error(
-                "Skipping Proxmox %s sync because %s failed; keeping its existing data",
+                "Skipping Proxmox %s %s because %s failed; keeping its existing data",
                 module,
+                action,
                 ", ".join(missing),
             )
             self.failed.append(module)
@@ -179,9 +183,10 @@ class _ModuleRunner:
             return step(*args, **kwargs)
         except Exception:
             logger.exception(
-                "Proxmox %s sync failed; keeping its existing data and continuing "
+                "Proxmox %s %s failed; keeping its existing data and continuing "
                 "with the other modules",
                 module,
+                action,
             )
             self.failed.append(module)
             return None
@@ -414,13 +419,32 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     elif runner.ok("ceph"):
         logger.warning("Skipping Ceph cleanup: the Ceph data could not be read")
 
+    # A failing cleanup marks its module failed, so the later cleanups of that
+    # module are skipped too; the skip log tells a failed cleanup apart from a
+    # failed sync.
+    failed_cleanups: set[str] = set()
     for modules, cleanup_step in cleanups:
         if runner.ok(*modules):
-            runner.run(modules[0], cleanup_step, neo4j_session, common_job_parameters)
+            runner.run(
+                modules[0],
+                cleanup_step,
+                neo4j_session,
+                common_job_parameters,
+                action="cleanup",
+            )
+            if not runner.ok(modules[0]):
+                failed_cleanups.add(modules[0])
         else:
+            reasons = [
+                f"the {module} {'cleanup' if module in failed_cleanups else 'sync'} "
+                "failed"
+                for module in modules
+                if not runner.ok(module)
+            ]
             logger.warning(
-                "Skipping cleanup of Proxmox %s because a module it needs failed",
+                "Skipping cleanup of Proxmox %s because %s",
                 " and ".join(modules),
+                " and ".join(reasons),
             )
 
     # Note: ProxmoxCluster doesn't need cleanup since it's the tenant root
@@ -429,12 +453,16 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     # Derive HAS_PERMISSION from the ACL graph once every ACL, principal, and
     # resource edge is current, so stale grants are removed with the rest.
     # A partial access sync would remove grants that still exist, so the job
-    # waits for the next sync in which access succeeds.
+    # waits for the next sync in which access succeeds. The job runs as its own
+    # step, so its failure is reported together with the other failed modules.
     if runner.ok("access"):
-        run_typed_analysis_job(
+        runner.run(
+            "effective permissions",
+            run_typed_analysis_job,
             PROXMOX_EFFECTIVE_PERMISSIONS,
             neo4j_session,
             common_job_parameters,
+            action="analysis",
         )
     else:
         logger.warning(
