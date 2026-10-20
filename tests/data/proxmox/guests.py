@@ -103,6 +103,92 @@ MOCK_SNAPSHOTS = {
     ],
 }
 
+# /nodes/{node}/{type}/{vmid}/snapshot/{snapname}/config, keyed by VM ID and
+# snapshot name. The cloud-init password is there to prove it is never stored.
+MOCK_SNAPSHOT_CONFIGS = {
+    100: {
+        "before-upgrade": {
+            "cores": 2,
+            "sockets": 1,
+            "memory": "4096",
+            "machine": "pc-q35-8.1",
+            "ostype": "l26",
+            "cpu": "x86-64-v2-AES,flags=+aes",
+            "scsi0": "local-lvm:vm-100-disk-0,size=10G",
+            "ide2": "local-lvm:vm-100-cloudinit,media=cdrom",
+            "net0": "virtio=BC:24:11:00:01:00,bridge=vmbr0",
+            "cipassword": "$5$secret$hash",
+            "snaptime": 1700000000,
+            "description": "Before upgrade",
+        },
+        "after-upgrade": {
+            "cores": 4,
+            "sockets": 2,
+            "memory": "8192",
+            "machine": "pc-q35-9.2+pve1",
+            "ostype": "l26",
+            "cpu": "custom-avx,flags=+aes",
+            "scsi0": "local-lvm:vm-100-disk-0,size=10G",
+            "virtio1": "local-lvm:vm-100-disk-1,size=20G",
+            "net0": "virtio=BC:24:11:00:01:00,bridge=vmbr0",
+            "net1": "virtio=BC:24:11:00:01:01,bridge=vmbr1",
+            "snaptime": 1700000100,
+            "vmstate": "local-lvm:vm-100-state-after-upgrade",
+        },
+    },
+    200: {
+        "base": {
+            "arch": "amd64",
+            "cores": 1,
+            "memory": 512,
+            "ostype": "debian",
+            "rootfs": "local-lvm:vm-200-disk-0,size=8G",
+            "mp0": "local-lvm:vm-200-disk-1,mp=/data,size=4G",
+            "net0": "name=eth0,bridge=vmbr0,hwaddr=BC:24:11:00:02:00,ip=dhcp",
+            "snaptime": 1700000200,
+        },
+    },
+}
+
+# /nodes/{node}/{type}/{vmid}/status/current of running guests. Runtime
+# counters (cpu, mem, uptime, pid) must not be stored.
+MOCK_GUEST_STATUS = {
+    100: {
+        "vmid": 100,
+        "name": "web",
+        "status": "running",
+        "qmpstatus": "running",
+        "pid": 12345,
+        "uptime": 3600,
+        "cpu": 0.02,
+        "mem": 1073741824,
+        "agent": 1,
+        "spice": 1,
+        "clipboard": "vnc",
+        "running-machine": "pc-q35-9.2+pve1",
+        "running-qemu": "9.2.0",
+        "ha": {"managed": 1, "state": "started"},
+        "proxmox-support": {
+            "backup-fleecing": True,
+            "backup-max-workers": True,
+            "pbs-dirty-bitmap": True,
+            "pbs-dirty-bitmap-migration": True,
+            "pbs-dirty-bitmap-savevm": True,
+            "pbs-library-version": "1.4.1 (UNKNOWN)",
+            "pbs-masterkey": True,
+            "query-bitmap-info": True,
+        },
+    },
+    200: {
+        "vmid": 200,
+        "name": "ct",
+        "status": "running",
+        "pid": 23456,
+        "uptime": 7200,
+        "ha": {"managed": 0},
+    },
+}
+
 # /nodes/{node}/qemu/{vmid}/cloudinit
 MOCK_CLOUDINIT = {
     100: [

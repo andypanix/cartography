@@ -7,24 +7,36 @@ Most per-node Ceph endpoints of Proxmox VE (monitors, managers, metadata
 servers, OSD tree, pools, CRUSH rules, file systems) answer with cluster-wide
 data, so they are read from one node only. OSD metadata and LVM details are
 local to the node that holds the OSD and are read from that node.
+
+The CRUSH map is read as decompiled text from the same node and parsed by
+ceph_crush. A CRUSH map that cannot be read or parsed is logged and skipped,
+the rest of Ceph is still synced, and the existing CRUSH buckets are kept.
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 from typing import Callable
 from typing import TypeVar
 
 import neo4j
+import requests
 from proxmoxer.core import ResourceException
 
 from cartography.client.core.tx import load
 from cartography.graph.job import GraphJob
 from cartography.intel.proxmox import cluster
 from cartography.intel.proxmox import storage
+from cartography.intel.proxmox.ceph_crush import CrushMap
+from cartography.intel.proxmox.ceph_crush import CrushMapParseError
+from cartography.intel.proxmox.ceph_crush import parse_crush_map
+from cartography.intel.proxmox.ceph_crush import transform_crush_buckets
+from cartography.intel.proxmox.ceph_crush import transform_crush_rule_details
 from cartography.intel.proxmox.util import cluster_scoped_id
 from cartography.intel.proxmox.util import proxmox_api_retry
 from cartography.intel.proxmox.util import proxmox_optional_endpoint
 from cartography.models.proxmox.ceph import ProxmoxCephClusterSchema
+from cartography.models.proxmox.ceph import ProxmoxCephCrushBucketSchema
 from cartography.models.proxmox.ceph import ProxmoxCephCrushRuleSchema
 from cartography.models.proxmox.ceph import ProxmoxCephFilesystemSchema
 from cartography.models.proxmox.ceph import ProxmoxCephManagerSchema
@@ -273,6 +285,19 @@ def get_ceph_rules(proxmox_client: Any, node_name: str) -> list[dict[str, Any]]:
 
 @timeit
 @proxmox_api_retry
+def get_ceph_crush_map(proxmox_client: Any, node_name: str) -> str:
+    """
+    Get the CRUSH map of the cluster, decompiled to text by crushtool.
+
+    :param proxmox_client: Proxmox API client
+    :param node_name: Node to query, any node with Ceph installed
+    :return: Decompiled CRUSH map text
+    """
+    return proxmox_client.nodes(node_name).ceph.crush.get()
+
+
+@timeit
+@proxmox_api_retry
 def get_ceph_filesystems(proxmox_client: Any, node_name: str) -> list[dict[str, Any]]:
     """
     Get every CephFS file system of the cluster.
@@ -331,6 +356,7 @@ def transform_ceph_cluster(
     flags: list[dict[str, Any]],
     health_mutes: list[dict[str, Any]] | None,
     cluster_id: str,
+    crush: CrushMap | None = None,
 ) -> dict[str, Any]:
     """
     Transform the Ceph status, metadata, flags, and muted checks into one cluster record.
@@ -340,6 +366,7 @@ def transform_ceph_cluster(
     :param flags: Raw OSD flag list
     :param health_mutes: Raw muted health check list, None when unknown
     :param cluster_id: Proxmox VE cluster ID
+    :param crush: Parsed CRUSH map, None when it could not be read
     :return: Ceph cluster dict
     """
     fsid = status["fsid"]
@@ -355,6 +382,7 @@ def transform_ceph_cluster(
         ),
         "flags": sorted(f["name"] for f in flags if f.get("value")),
         "ceph_versions": _collect_versions(metadata),
+        "crush_device_classes": crush.device_classes if crush else None,
     }
 
 
@@ -544,28 +572,48 @@ def transform_osds(
     return transformed
 
 
+CRUSH_RULE_DETAIL_KEYS = (
+    "rule_id",
+    "rule_type",
+    "min_size",
+    "max_size",
+    "take_buckets",
+    "device_class",
+    "device_classes",
+    "failure_domain",
+    "steps",
+)
+
+
 def transform_crush_rules(
     rules: list[dict[str, Any]],
     cluster_id: str,
     ceph_cluster_id: str,
+    rule_details: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Transform CRUSH rules.
+    Transform CRUSH rules, adding the details of the decompiled CRUSH map.
 
     :param rules: Raw rule list
     :param cluster_id: Proxmox VE cluster ID
     :param ceph_cluster_id: Graph ID of the Ceph cluster
+    :param rule_details: Rule properties from transform_crush_rule_details,
+        keyed by rule name; None when the CRUSH map could not be read
     :return: List of CRUSH rule dicts
     """
-    return [
-        {
-            "id": crush_rule_graph_id(cluster_id, rule["name"]),
-            "name": rule["name"],
-            "cluster_id": cluster_id,
-            "ceph_cluster_id": ceph_cluster_id,
-        }
-        for rule in rules
-    ]
+    result = []
+    for rule in rules:
+        details = (rule_details or {}).get(rule["name"]) or {}
+        result.append(
+            {
+                "id": crush_rule_graph_id(cluster_id, rule["name"]),
+                "name": rule["name"],
+                "cluster_id": cluster_id,
+                "ceph_cluster_id": ceph_cluster_id,
+                **{key: details.get(key) for key in CRUSH_RULE_DETAIL_KEYS},
+            }
+        )
+    return result
 
 
 def _is_local_ceph_storage(entry: dict[str, Any], storage_type: str) -> bool:
@@ -857,6 +905,35 @@ def _find_ceph_status(
     return None, None, absent_everywhere
 
 
+def _read_crush_map(proxmox_client: Any, node_name: str) -> CrushMap | None:
+    """
+    Read and parse the CRUSH map, or return None when that fails.
+
+    A failure is logged and only the CRUSH data is skipped: the rest of Ceph is
+    still synced and the existing CRUSH buckets are kept.
+    """
+    try:
+        text = get_ceph_crush_map(proxmox_client, node_name)
+    except (ResourceException, requests.exceptions.RequestException) as e:
+        logger.warning(
+            "Cannot read the Ceph CRUSH map from node %s, skipping CRUSH buckets "
+            "and keeping the existing ones: %s",
+            node_name,
+            e,
+        )
+        return None
+    try:
+        return parse_crush_map(text)
+    except CrushMapParseError as e:
+        logger.warning(
+            "Cannot parse the Ceph CRUSH map read from node %s, skipping CRUSH "
+            "buckets and keeping the existing ones: %s",
+            node_name,
+            e,
+        )
+        return None
+
+
 def _read_cluster_level(
     call: Callable[[], T], fallback: Callable[[], T], what: str
 ) -> T:
@@ -877,6 +954,21 @@ def _read_cluster_level(
 # ============================================================================
 
 
+@dataclass(frozen=True)
+class CephSyncResult:
+    """
+    Which Ceph data a sync read completely, to decide which cleanups can run.
+
+    current: the Ceph data is current (synced, or Ceph confirmed absent on
+    every online node), so the Ceph cleanup can run.
+    crush_current: the CRUSH buckets are current too, so their cleanup can
+    run; False when the CRUSH map could not be read or parsed.
+    """
+
+    current: bool
+    crush_current: bool
+
+
 @timeit
 def sync(
     neo4j_session: neo4j.Session,
@@ -884,9 +976,9 @@ def sync(
     cluster_id: str,
     update_tag: int,
     common_job_parameters: dict[str, Any],
-) -> bool:
+) -> CephSyncResult:
     """
-    Sync the Ceph cluster, its daemons, OSDs, pools, CRUSH rules, and file systems.
+    Sync the Ceph cluster, its daemons, OSDs, pools, CRUSH rules and buckets, and file systems.
 
     When the API node has no Ceph, the Ceph status is read through the other
     online nodes. The Ceph sync is skipped when no online node has Ceph.
@@ -896,9 +988,10 @@ def sync(
     :param cluster_id: Parent cluster ID
     :param update_tag: Sync timestamp
     :param common_job_parameters: Common parameters
-    :return: True when the Ceph data is current (synced, or Ceph confirmed
-        absent on every online node) and the Ceph cleanup can run. False when
-        Ceph could not be read, so the existing Ceph data must be kept.
+    :return: Whether the Ceph data and the CRUSH buckets are current. The
+        Ceph data is not current when Ceph could not be read, and the CRUSH
+        buckets are not current when the CRUSH map could not be read or
+        parsed; the existing data must then be kept.
     """
     logger.info("Syncing Proxmox Ceph")
 
@@ -925,12 +1018,12 @@ def sync(
         if status is None:
             if absent_everywhere:
                 logger.info("Ceph is not installed or not initialized, skipping")
-                return True
+                return CephSyncResult(current=True, crush_current=True)
             logger.warning(
                 "Cannot read Ceph from any online node, skipping Ceph and "
                 "keeping the existing Ceph data",
             )
-            return False
+            return CephSyncResult(current=False, crush_current=False)
 
     metadata = _read_cluster_level(
         lambda: get_ceph_metadata(proxmox_client),
@@ -949,7 +1042,7 @@ def sync(
             "No online Proxmox node to read Ceph data from, skipping Ceph and "
             "keeping the existing Ceph data",
         )
-        return False
+        return CephSyncResult(current=False, crush_current=False)
 
     monitors = get_ceph_monitors(proxmox_client, query_node)
     managers = get_ceph_managers(proxmox_client, query_node)
@@ -967,17 +1060,34 @@ def sync(
         for p in pools
     }
     filesystems = get_ceph_filesystems(proxmox_client, query_node)
+    crush = _read_crush_map(proxmox_client, query_node)
     osds = extract_osds(osd_tree)
     osd_details, osd_volumes = _get_osd_details(proxmox_client, osds, online_nodes)
     storage_list = storage.get_storage(proxmox_client)
 
     # TRANSFORM
     ceph_cluster = transform_ceph_cluster(
-        status, metadata, flags, health_mutes, cluster_id
+        status, metadata, flags, health_mutes, cluster_id, crush
     )
     ceph_cluster_id = ceph_cluster["id"]
     fs_names = [fs["name"] for fs in filesystems]
-    transformed_rules = transform_crush_rules(rules, cluster_id, ceph_cluster_id)
+    transformed_rules = transform_crush_rules(
+        rules,
+        cluster_id,
+        ceph_cluster_id,
+        transform_crush_rule_details(crush) if crush else None,
+    )
+    transformed_buckets = (
+        transform_crush_buckets(
+            crush,
+            cluster_id,
+            ceph_cluster_id,
+            lambda name: crush_rule_graph_id(cluster_id, name),
+            lambda number: _daemon_id(cluster_id, "osd", number),
+        )
+        if crush
+        else []
+    )
     transformed_pools = transform_pools(
         pools,
         pool_statuses,
@@ -1000,7 +1110,9 @@ def sync(
         osds, osd_details, osd_volumes, cluster_id, ceph_cluster_id
     )
 
-    # LOAD - targets of relationships first
+    # LOAD - targets of relationships first. CRUSH buckets come last, each
+    # child bucket before its parent, because they link to OSDs, CRUSH rules,
+    # and each other.
     for schema, data in (
         (ProxmoxCephClusterSchema(), [ceph_cluster]),
         (ProxmoxCephCrushRuleSchema(), transformed_rules),
@@ -1010,12 +1122,13 @@ def sync(
         (ProxmoxCephManagerSchema(), transformed_managers),
         (ProxmoxCephMetadataServerSchema(), transformed_mds),
         (ProxmoxCephOSDSchema(), transformed_osds),
+        (ProxmoxCephCrushBucketSchema(), transformed_buckets),
     ):
         load_ceph_data(neo4j_session, schema, data, cluster_id, update_tag)
 
     logger.info(
         "Synced Ceph cluster %s: %d monitors, %d managers, %d metadata servers, "
-        "%d OSDs, %d pools, %d CRUSH rules, %d file systems",
+        "%d OSDs, %d pools, %d CRUSH rules, %d CRUSH buckets, %d file systems",
         ceph_cluster["fsid"],
         len(transformed_monitors),
         len(transformed_managers),
@@ -1023,9 +1136,10 @@ def sync(
         len(transformed_osds),
         len(transformed_pools),
         len(transformed_rules),
+        len(transformed_buckets),
         len(transformed_filesystems),
     )
-    return True
+    return CephSyncResult(current=True, crush_current=crush is not None)
 
 
 CEPH_SCHEMAS = (
@@ -1043,12 +1157,23 @@ CEPH_SCHEMAS = (
 def cleanup(
     neo4j_session: neo4j.Session,
     common_job_parameters: dict[str, Any],
+    include_crush: bool = True,
 ) -> None:
     """
     Remove stale Ceph nodes and relationships of the cluster.
 
     :param neo4j_session: Neo4j session
     :param common_job_parameters: Common parameters including UPDATE_TAG and CLUSTER_ID
+    :param include_crush: Also remove stale CRUSH buckets; False when the CRUSH
+        map could not be read, so the existing buckets are kept
     """
     for schema in CEPH_SCHEMAS:
         GraphJob.from_node_schema(schema(), common_job_parameters).run(neo4j_session)
+    if include_crush:
+        GraphJob.from_node_schema(
+            ProxmoxCephCrushBucketSchema(), common_job_parameters
+        ).run(neo4j_session)
+    else:
+        logger.warning(
+            "Skipping cleanup of Ceph CRUSH buckets: the CRUSH map could not be read",
+        )

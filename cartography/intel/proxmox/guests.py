@@ -3,14 +3,19 @@ Sync per-guest details of Proxmox VMs and LXC containers.
 
 compute.sync lists the guests and reads their configuration. This module adds
 what other endpoints return about each guest: cluster-wide HA state and pool,
-snapshots, cloud-init values, container IP addresses, and the extra QEMU guest
+snapshots and the configuration saved with each one, cloud-init values,
+container IP addresses, the status of running guests, and the extra QEMU guest
 agent data (filesystems, logged-in users, time zone). It also syncs the
 cluster's custom CPU models, which VMs reference from their CPU type.
 
 The per-guest status endpoint (/nodes/{node}/{type}/{vmid}/status/current) is
-not read: everything it returns that the graph needs is already available from
-the per-node list (qmpstatus, running machine and QEMU version, lock, tags),
-from /cluster/resources (HA state), or from the guest configuration (agent).
+read for running guests only, for what the per-node list and
+/cluster/resources lack: the HA manager status, the SPICE and clipboard
+display settings, and the Proxmox QEMU features. Runtime counters such as CPU
+usage, uptime, or the process ID are not stored.
+
+Every per-guest read that fails is logged and skipped: the guest is still
+synced without that data.
 """
 
 import base64
@@ -42,6 +47,11 @@ CURRENT_SNAPSHOT_NAME = "current"
 CUSTOM_CPU_PREFIX = "custom-"
 _IPCONFIG_KEY = re.compile(r"^ipconfig\d+$")
 _CLOUDINIT_DRIVE_KEY = re.compile(r"^(ide|sata|scsi)\d+$")
+_VM_DRIVE_KEY = re.compile(r"^(ide|sata|scsi|virtio)\d+$")
+_CONTAINER_VOLUME_KEY = re.compile(r"^(rootfs|mp\d+)$")
+_NIC_KEY = re.compile(r"^net\d+$")
+# Errors of one per-guest read that are logged and skipped.
+GUEST_READ_ERRORS = (ResourceException, requests.exceptions.RequestException)
 
 
 # ============================================================================
@@ -91,6 +101,48 @@ def get_guest_snapshots(
     if vm_type == "qemu":
         return proxmox_client.nodes(node_name).qemu(vmid).snapshot.get()
     return proxmox_client.nodes(node_name).lxc(vmid).snapshot.get()
+
+
+@timeit
+@proxmox_api_retry
+def get_snapshot_config(
+    proxmox_client: Any, node_name: str, vmid: int, vm_type: str, snapname: str
+) -> dict[str, Any]:
+    """
+    Get the guest configuration saved with one snapshot.
+
+    :param proxmox_client: Proxmox API client
+    :param node_name: Node name
+    :param vmid: VM ID
+    :param vm_type: 'qemu' or 'lxc'
+    :param snapname: Snapshot name
+    :return: Configuration dict of the snapshot
+    """
+    guest = (
+        proxmox_client.nodes(node_name).qemu(vmid)
+        if vm_type == "qemu"
+        else proxmox_client.nodes(node_name).lxc(vmid)
+    )
+    return guest.snapshot(snapname).config.get()
+
+
+@timeit
+@proxmox_api_retry
+def get_guest_status(
+    proxmox_client: Any, node_name: str, vmid: int, vm_type: str
+) -> dict[str, Any]:
+    """
+    Get the current status of a VM or container.
+
+    :param proxmox_client: Proxmox API client
+    :param node_name: Node name
+    :param vmid: VM ID
+    :param vm_type: 'qemu' or 'lxc'
+    :return: Status dict with the HA status and, for VMs, display settings
+    """
+    if vm_type == "qemu":
+        return proxmox_client.nodes(node_name).qemu(vmid).status.current.get()
+    return proxmox_client.nodes(node_name).lxc(vmid).status.current.get()
 
 
 @timeit
@@ -175,6 +227,19 @@ def custom_cpu_model_name(cpu: Any) -> str | None:
     :param cpu: Value of the 'cpu' VM config key, such as custom-avx,flags=+aes
     :return: Model name without the custom- prefix, or None for built-in types
     """
+    cputype = cpu_type(cpu)
+    if cputype and cputype.startswith(CUSTOM_CPU_PREFIX):
+        return cputype[len(CUSTOM_CPU_PREFIX) :] or None
+    return None
+
+
+def cpu_type(cpu: Any) -> str | None:
+    """
+    Get the CPU type of a VM CPU setting, without its options.
+
+    :param cpu: Value of the 'cpu' VM config key, such as x86-64-v2-AES,flags=+aes
+    :return: CPU type, such as x86-64-v2-AES or custom-avx, or None when unset
+    """
     if not isinstance(cpu, str) or not cpu:
         return None
     cputype = None
@@ -183,9 +248,91 @@ def custom_cpu_model_name(cpu: Any) -> str | None:
             cputype = part
         elif part.startswith("cputype="):
             cputype = part.split("=", 1)[1]
-    if cputype and cputype.startswith(CUSTOM_CPU_PREFIX):
-        return cputype[len(CUSTOM_CPU_PREFIX) :] or None
-    return None
+    return cputype or None
+
+
+def _is_cdrom(value: Any) -> bool:
+    return isinstance(value, str) and "media=cdrom" in value.split(",")
+
+
+def transform_snapshot_config(config: dict[str, Any], vm_type: str) -> dict[str, Any]:
+    """
+    Reduce the configuration saved with a snapshot to a few hardware facts.
+
+    Only sizing and type values are kept. Secrets the configuration can hold,
+    such as the cloud-init password, are never read.
+
+    :param config: Response of /nodes/{node}/{type}/{vmid}/snapshot/{snapname}/config
+    :param vm_type: 'qemu' or 'lxc'
+    :return: Dict of config_* snapshot properties
+    """
+    if vm_type == "qemu":
+        disks = [
+            key
+            for key, value in config.items()
+            if _VM_DRIVE_KEY.match(key) and not _is_cdrom(value)
+        ]
+    else:
+        disks = [key for key in config if _CONTAINER_VOLUME_KEY.match(key)]
+    return {
+        "config_cores": config.get("cores"),
+        "config_sockets": config.get("sockets"),
+        "config_memory": config.get("memory"),
+        "config_machine": config.get("machine"),
+        "config_ostype": config.get("ostype"),
+        "config_cpu_type": cpu_type(config.get("cpu")),
+        "config_disk_count": len(disks),
+        "config_nic_count": sum(1 for key in config if _NIC_KEY.match(key)),
+    }
+
+
+SNAPSHOT_CONFIG_PROPERTIES = (
+    "config_cores",
+    "config_sockets",
+    "config_memory",
+    "config_machine",
+    "config_ostype",
+    "config_cpu_type",
+    "config_disk_count",
+    "config_nic_count",
+)
+
+
+def transform_guest_status(status: dict[str, Any]) -> dict[str, Any]:
+    """
+    Turn the status of a running guest into VM properties.
+
+    Keeps the HA manager status and the display and Proxmox QEMU feature
+    settings. Runtime counters (CPU, memory and disk usage, uptime, process ID)
+    are left out because they change on every read.
+
+    :param status: Response of /nodes/{node}/{type}/{vmid}/status/current
+    :return: Dict of VM properties
+    """
+    raw_ha = status.get("ha")
+    ha: dict[str, Any] = raw_ha if isinstance(raw_ha, dict) else {}
+    managed = ha.get("managed")
+    spice = status.get("spice")
+    support = status.get("proxmox-support")
+    features = (
+        sorted(key for key, value in support.items() if value is True)
+        if isinstance(support, dict)
+        else None
+    )
+    return {
+        "ha_managed": None if managed is None else bool(managed),
+        "ha_state": ha.get("state"),
+        "ha_group": ha.get("group"),
+        "ha_request": ha.get("request"),
+        "spice": None if spice is None else bool(spice),
+        "clipboard": status.get("clipboard"),
+        "proxmox_support": features or None,
+        "pbs_library_version": (
+            support.get("pbs-library-version") if isinstance(support, dict) else None
+        ),
+        "running_machine": status.get("running-machine"),
+        "running_qemu": status.get("running-qemu"),
+    }
 
 
 def ssh_key_fingerprint(line: str) -> str | None:
@@ -271,6 +418,7 @@ def transform_snapshots(
     snapshots: list[dict[str, Any]],
     vm_path: str,
     cluster_id: str,
+    snapshot_configs: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Transform the snapshots of one guest, parents first.
@@ -282,8 +430,11 @@ def transform_snapshots(
     :param snapshots: Snapshot list from the API
     :param vm_path: Guest ID inside the cluster, such as node1/qemu/100
     :param cluster_id: Parent cluster ID
+    :param snapshot_configs: Configuration of each snapshot keyed by snapshot
+        name; a snapshot without one gets empty config_* properties
     :return: List of snapshot dicts
     """
+    vm_type = vm_path.split("/")[-2]
     by_name = {
         s["name"]: s
         for s in snapshots
@@ -313,6 +464,12 @@ def transform_snapshots(
     for snap in ordered:
         parent = snap.get("parent") or None
         vmstate = snap.get("vmstate")
+        config = (snapshot_configs or {}).get(snap["name"])
+        config_facts = (
+            transform_snapshot_config(config, vm_type)
+            if config is not None
+            else dict.fromkeys(SNAPSHOT_CONFIG_PROPERTIES)
+        )
         result.append(
             {
                 "id": snapshot_id(snap["name"]),
@@ -329,6 +486,7 @@ def transform_snapshots(
                     if isinstance(parent, str) and parent in by_name
                     else None
                 ),
+                **config_facts,
             }
         )
     return result
@@ -511,6 +669,14 @@ GUEST_DETAIL_PROPERTIES = (
     "guest_timezone",
     "guest_timezone_offset",
     "guest_users",
+    "ha_managed",
+    "ha_state",
+    "ha_group",
+    "ha_request",
+    "spice",
+    "clipboard",
+    "proxmox_support",
+    "pbs_library_version",
 )
 
 
@@ -557,6 +723,17 @@ def _agent_command(proxmox_client: Any, node_name: str, vmid: int, command: str)
         return None
 
 
+def _read_or_none(read: Any, what: str, *args: Any) -> Any:
+    """
+    Run one per-guest read, or log a warning and return None when it fails.
+    """
+    try:
+        return read(*args)
+    except GUEST_READ_ERRORS as e:
+        logger.warning("Could not read the %s, skipping it: %s", what, e)
+        return None
+
+
 def collect_guest_details(
     proxmox_client: Any,
     vm: dict[str, Any],
@@ -591,19 +768,50 @@ def collect_guest_details(
     resource = guest_resources.get(int(vmid), {})
     vm["hastate"] = resource.get("hastate")
     vm["pool"] = resource.get("pool")
-    vm["running_machine"] = vm.get("running-machine")
-    vm["running_qemu"] = vm.get("running-qemu")
+
+    # Values of the per-node list win; the status of a running guest fills in
+    # what the list lacks.
+    status = (
+        _read_or_none(
+            get_guest_status,
+            f"status of {vm_type} guest {vmid} on node {node_name}",
+            proxmox_client,
+            node_name,
+            vmid,
+            vm_type,
+        )
+        if running
+        else None
+    )
+    status_values = transform_guest_status(status) if isinstance(status, dict) else {}
+    for key, value in transform_guest_status(vm).items():
+        vm[key] = value if value is not None else status_values.get(key)
 
     model = custom_cpu_model_name(vm_config.get("cpu"))
     vm["custom_cpu_model"] = model
     vm["custom_cpu_model_id"] = cluster_scoped_id(cluster_id, model) if model else None
 
+    snapshots = get_guest_snapshots(proxmox_client, node_name, vmid, vm_type)
+    snapshot_configs: dict[str, dict[str, Any]] = {}
+    for snap in snapshots:
+        name = snap.get("name")
+        if not name or name == CURRENT_SNAPSHOT_NAME:
+            continue
+        config = _read_or_none(
+            get_snapshot_config,
+            f"configuration of snapshot {name} of {vm_type} guest {vmid} on "
+            f"node {node_name}",
+            proxmox_client,
+            node_name,
+            vmid,
+            vm_type,
+            name,
+        )
+        if isinstance(config, dict):
+            snapshot_configs[name] = config
+
     details = GuestDetails(
-        snapshots=transform_snapshots(
-            get_guest_snapshots(proxmox_client, node_name, vmid, vm_type),
-            vm_path,
-            cluster_id,
-        ),
+        snapshots=transform_snapshots(snapshots, vm_path, cluster_id, snapshot_configs),
     )
 
     if vm_type == "qemu" and has_cloudinit_drive(vm_config):

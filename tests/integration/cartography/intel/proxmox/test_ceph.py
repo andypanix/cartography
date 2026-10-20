@@ -10,6 +10,8 @@ from unittest.mock import patch
 import cartography.intel.proxmox.ceph as ceph
 import cartography.intel.proxmox.cluster
 import cartography.intel.proxmox.storage
+from cartography.models.proxmox.ceph import ProxmoxCephCrushBucketSchema
+from tests.data.proxmox.ceph import MOCK_CEPH_CRUSH_MAP
 from tests.data.proxmox.ceph import MOCK_CEPH_FILESYSTEMS
 from tests.data.proxmox.ceph import MOCK_CEPH_FLAGS
 from tests.data.proxmox.ceph import MOCK_CEPH_FSID
@@ -104,6 +106,7 @@ def _ceph_patches() -> list[Any]:
             "get_storage",
             return_value=MOCK_CEPH_STORAGE,
         ),
+        patch.object(ceph, "get_ceph_crush_map", return_value=MOCK_CEPH_CRUSH_MAP),
     ]
 
 
@@ -263,6 +266,158 @@ def test_sync_ceph(neo4j_session):
         ("vm-pool", True)
     }
 
+    # Assert - CRUSH hierarchy: root > rack > hosts > OSDs
+    buckets = {
+        "test-cluster/crush_bucket:default",
+        "test-cluster/crush_bucket:rack1",
+        "test-cluster/crush_bucket:node1",
+        "test-cluster/crush_bucket:node2",
+    }
+    assert _rels(
+        neo4j_session,
+        "ProxmoxCephCrushBucket",
+        "MEMBER_OF_CEPH_CLUSTER",
+        "ProxmoxCephCluster",
+    ) == {(b, CEPH_ID) for b in buckets}
+    assert check_rels(
+        neo4j_session,
+        "ProxmoxCluster",
+        "id",
+        "ProxmoxCephCrushBucket",
+        "id",
+        "RESOURCE",
+        rel_direction_right=True,
+    ) == {(TEST_CLUSTER_ID, b) for b in buckets}
+    assert _rels(
+        neo4j_session, "ProxmoxCephCrushBucket", "CONTAINS", "ProxmoxCephCrushBucket"
+    ) == {
+        ("test-cluster/crush_bucket:default", "test-cluster/crush_bucket:rack1"),
+        ("test-cluster/crush_bucket:rack1", "test-cluster/crush_bucket:node1"),
+        ("test-cluster/crush_bucket:rack1", "test-cluster/crush_bucket:node2"),
+    }
+    assert _rels(
+        neo4j_session, "ProxmoxCephCrushBucket", "CONTAINS", "ProxmoxCephOSD"
+    ) == {
+        ("test-cluster/crush_bucket:node1", "test-cluster/osd.0"),
+        ("test-cluster/crush_bucket:node2", "test-cluster/osd.1"),
+    }
+    assert _rels(
+        neo4j_session, "ProxmoxCephCrushBucket", "REPRESENTS", "ProxmoxNode"
+    ) == {
+        ("test-cluster/crush_bucket:node1", "test-cluster/node1"),
+        ("test-cluster/crush_bucket:node2", "test-cluster/node2"),
+    }
+    assert _rels(
+        neo4j_session, "ProxmoxCephCrushRule", "TAKES", "ProxmoxCephCrushBucket"
+    ) == {
+        (
+            "test-cluster/crush_rule:replicated_rule",
+            "test-cluster/crush_bucket:default",
+        ),
+        ("test-cluster/crush_rule:ssd_only", "test-cluster/crush_bucket:default"),
+    }
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxCephCrushBucket",
+        ["name", "type", "bucket_id", "weight"],
+    ) == {
+        ("default", "root", -1, 1.8),
+        ("rack1", "rack", -9, 1.8),
+        ("node1", "host", -3, 0.9),
+        ("node2", "host", -5, 0.9),
+    }
+    assert check_nodes(
+        neo4j_session,
+        "ProxmoxCephCrushRule",
+        ["name", "rule_id", "device_class", "failure_domain"],
+    ) == {
+        ("replicated_rule", 0, None, "host"),
+        ("ssd_only", 1, "ssd", "rack"),
+    }
+    assert neo4j_session.run(
+        "MATCH (c:ProxmoxCephCluster) RETURN c.crush_device_classes AS classes",
+    ).single()["classes"] == ["hdd", "ssd"]
+
+
+def _bucket_ids(neo4j_session) -> set[str]:
+    nodes = check_nodes(neo4j_session, "ProxmoxCephCrushBucket", ["id"]) or set()
+    return {i for (i,) in nodes}
+
+
+def test_crush_map_parse_error_skips_crush_only(neo4j_session, caplog):
+    # Arrange - a first sync with a readable CRUSH map
+    _first_sync(neo4j_session)
+    buckets_before = _bucket_ids(neo4j_session)
+    new_tag = TEST_UPDATE_TAG + 1
+    params = {"UPDATE_TAG": new_tag, "CLUSTER_ID": TEST_CLUSTER_ID}
+
+    # Act - the CRUSH map now comes back in an unexpected format
+    with ExitStack() as stack:
+        for p in _ceph_patches():
+            stack.enter_context(p)
+        stack.enter_context(
+            patch.object(ceph, "get_ceph_crush_map", return_value="{ not crush }"),
+        )
+        result = ceph.sync(neo4j_session, MagicMock(), TEST_CLUSTER_ID, new_tag, params)
+    ceph.cleanup(neo4j_session, params, include_crush=result.crush_current)
+
+    # Assert - the rest of Ceph is current, the CRUSH buckets are kept
+    assert result == ceph.CephSyncResult(current=True, crush_current=False)
+    assert "Cannot parse the Ceph CRUSH map" in caplog.text
+    assert len(buckets_before) == 4
+    assert _bucket_ids(neo4j_session) == buckets_before
+    assert check_nodes(neo4j_session, "ProxmoxCephOSD", ["lastupdated"]) == {(new_tag,)}
+    assert _rels(
+        neo4j_session, "ProxmoxCephCrushBucket", "CONTAINS", "ProxmoxCephOSD"
+    ) == {
+        ("test-cluster/crush_bucket:node1", "test-cluster/osd.0"),
+        ("test-cluster/crush_bucket:node2", "test-cluster/osd.1"),
+    }
+
+
+def test_crush_bucket_removed_from_map_is_cleaned_up(neo4j_session):
+    # Arrange - a first sync, then rack1 is removed and the hosts moved to the root
+    _first_sync(neo4j_session)
+    new_tag = TEST_UPDATE_TAG + 1
+    params = {"UPDATE_TAG": new_tag, "CLUSTER_ID": TEST_CLUSTER_ID}
+    flat_map = (
+        MOCK_CEPH_CRUSH_MAP.split("rack rack1 {")[0]
+        + "root default {\n\tid -1\n\talg straw2\n\thash 0\n"
+        + "\titem node1 weight 0.9\n\titem node2 weight 0.9\n}\n"
+        + "rule replicated_rule {\n\tid 0\n\ttype replicated\n"
+        + "\tstep take default\n\tstep chooseleaf firstn 0 type host\n"
+        + "\tstep emit\n}\n"
+    )
+
+    # Act
+    with ExitStack() as stack:
+        for p in _ceph_patches():
+            stack.enter_context(p)
+        stack.enter_context(
+            patch.object(ceph, "get_ceph_crush_map", return_value=flat_map),
+        )
+        result = ceph.sync(neo4j_session, MagicMock(), TEST_CLUSTER_ID, new_tag, params)
+    ceph.cleanup(neo4j_session, params, include_crush=result.crush_current)
+
+    # Assert
+    assert result.crush_current is True
+    assert "test-cluster/crush_bucket:rack1" not in _bucket_ids(neo4j_session)
+    assert _rels(
+        neo4j_session, "ProxmoxCephCrushBucket", "CONTAINS", "ProxmoxCephCrushBucket"
+    ) == {
+        ("test-cluster/crush_bucket:default", "test-cluster/crush_bucket:node1"),
+        ("test-cluster/crush_bucket:default", "test-cluster/crush_bucket:node2"),
+    }
+    # ssd_only is no longer in the CRUSH map: its TAKES edge is gone
+    assert _rels(
+        neo4j_session, "ProxmoxCephCrushRule", "TAKES", "ProxmoxCephCrushBucket"
+    ) == {
+        (
+            "test-cluster/crush_rule:replicated_rule",
+            "test-cluster/crush_bucket:default",
+        ),
+    }
+
 
 def _first_sync(neo4j_session) -> None:
     _seed(neo4j_session)
@@ -287,7 +442,7 @@ def _metadata_without_local_ceph(_client: Any, scope: str = "all") -> dict[str, 
 
 def _ceph_ids(neo4j_session) -> set[str]:
     ids: set[str] = set()
-    for schema in ceph.CEPH_SCHEMAS:
+    for schema in (*ceph.CEPH_SCHEMAS, ProxmoxCephCrushBucketSchema):
         ids |= {
             i for (i,) in check_nodes(neo4j_session, schema().label, ["id"]) or set()
         }
@@ -320,9 +475,11 @@ def test_sync_ceph_through_another_node(neo4j_session):
         )
     monitors_mock = mocks[5]
 
-    # Assert - per-node data is read from the node that answered the status
-    assert current is True
+    # Assert - per-node data and the CRUSH map are read from the node that
+    # answered the status
+    assert current == ceph.CephSyncResult(current=True, crush_current=True)
     assert monitors_mock.call_args.args[1] == "node2"
+    assert mocks[-1].call_args.args[1] == "node2"
     record = neo4j_session.run(
         """
         MATCH (:ProxmoxCluster {id: $cluster_id})-[:RESOURCE]->(c:ProxmoxCephCluster)
@@ -360,11 +517,11 @@ def test_ceph_unreadable_keeps_data(neo4j_session):
         current = ceph.sync(
             neo4j_session, MagicMock(), TEST_CLUSTER_ID, new_tag, params
         )
-    if current:
+    if current.current:
         ceph.cleanup(neo4j_session, params)
 
     # Assert - the cleanup is skipped and the Ceph data is kept
-    assert current is False
+    assert current == ceph.CephSyncResult(current=False, crush_current=False)
     assert before
     assert _ceph_ids(neo4j_session) == before
 
@@ -392,10 +549,10 @@ def test_ceph_removed_cleans_up(neo4j_session):
         current = ceph.sync(
             neo4j_session, MagicMock(), TEST_CLUSTER_ID, new_tag, params
         )
-    if current:
-        ceph.cleanup(neo4j_session, params)
+    if current.current:
+        ceph.cleanup(neo4j_session, params, include_crush=current.crush_current)
 
     # Assert - every online node was asked, and every Ceph node is gone
-    assert current is True
+    assert current == ceph.CephSyncResult(current=True, crush_current=True)
     assert node_status.call_count == len(MOCK_CEPH_NODES)
     assert _ceph_ids(neo4j_session) == set()

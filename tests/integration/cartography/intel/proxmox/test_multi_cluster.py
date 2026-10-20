@@ -97,7 +97,29 @@ SCOPED_IDS = {
     "ProxmoxCephPool": "pool:rbd",
     "ProxmoxCephCrushRule": "crush_rule:replicated_rule",
     "ProxmoxCephFilesystem": "fs:cephfs",
+    "ProxmoxCephCrushBucket": "crush_bucket:pve",
 }
+
+# A CRUSH map with one host bucket, so each cluster has one bucket node.
+CRUSH_MAP = """# begin crush map
+device 0 osd.0 class ssd
+type 0 osd
+type 1 host
+host pve {
+\tid -1
+\talg straw2
+\thash 0
+\titem osd.0 weight 1.00000
+}
+rule replicated_rule {
+\tid 0
+\ttype replicated
+\tstep take pve
+\tstep choose firstn 0 type osd
+\tstep emit
+}
+# end crush map
+"""
 
 
 def _id(cluster_id: str, label: str) -> str:
@@ -148,6 +170,7 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
         (ceph, "get_ceph_osd_metadata", {}),
         (ceph, "get_ceph_osd_lv_info", {}),
         (ceph, "get_ceph_rules", [{"name": "replicated_rule"}]),
+        (ceph, "get_ceph_crush_map", CRUSH_MAP),
         (
             ceph,
             "get_ceph_pools",
@@ -221,6 +244,11 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
             [{"name": "base", "snaptime": 1700000000}],
         ),
         (
+            cartography.intel.proxmox.guests,
+            "get_snapshot_config",
+            {"cores": 2, "scsi0": "local:vm-100-disk-0,size=8G"},
+        ),
+        (
             storage,
             "get_storage",
             [{"storage": "local", "type": "dir"}] if with_storage else [],
@@ -237,6 +265,11 @@ def _api_data(cluster_id: str, with_storage: bool = True) -> list[tuple[Any, str
                     "shared": 0,
                 },
             ],
+        ),
+        (
+            storage,
+            "get_storage_status_detail",
+            {"type": "dir", "active": 1, "total": 100, "used": 10, "avail": 90},
         ),
         (
             cartography.intel.proxmox.storage_content,
@@ -468,6 +501,11 @@ def _node_details_api_data(cluster_id: str) -> list[tuple[Any, str, Any]]:
         (details, "get_node_dns", {}),
         (details, "get_node_time", {"timezone": "UTC"}),
         (details, "get_node_services", [{"service": "pveproxy", "name": "pveproxy"}]),
+        (
+            details,
+            "get_node_service_state",
+            {"service": "pveproxy", "name": "pveproxy", "state": "running"},
+        ),
         (details, "get_pci_devices", [{"id": "0000:01:00.0", "mdev": 1}]),
         (details, "get_pci_mdev_types", [{"type": "nvidia-1", "available": 1}]),
     ]
@@ -608,6 +646,10 @@ def test_two_clusters_with_identical_names_stay_separate(neo4j_session):
         ("ProxmoxCephPool", "USES_CRUSH_RULE", "ProxmoxCephCrushRule"),
         ("ProxmoxCephFilesystem", "USES_POOL", "ProxmoxCephPool"),
         ("ProxmoxCephMetadataServer", "SERVES", "ProxmoxCephFilesystem"),
+        ("ProxmoxCephCrushBucket", "CONTAINS", "ProxmoxCephOSD"),
+        ("ProxmoxCephCrushBucket", "REPRESENTS", "ProxmoxNode"),
+        ("ProxmoxCephCrushBucket", "MEMBER_OF_CEPH_CLUSTER", "ProxmoxCephCluster"),
+        ("ProxmoxCephCrushRule", "TAKES", "ProxmoxCephCrushBucket"),
     )
     for source, rel, target in cluster_edges:
         assert check_rels(

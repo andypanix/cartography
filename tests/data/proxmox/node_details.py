@@ -441,6 +441,27 @@ MOCK_SERVICES = [
     },
 ]
 
+# /nodes/{node}/services/{service}/state, read after the list: corosync was
+# started in between, so the state endpoint has the newer values.
+MOCK_SERVICE_STATES = {
+    "pveproxy": {
+        "service": "pveproxy",
+        "name": "pveproxy",
+        "desc": "PVE API Proxy Server",
+        "state": "running",
+        "active-state": "active",
+        "unit-state": "enabled",
+    },
+    "corosync": {
+        "service": "corosync",
+        "name": "corosync",
+        "desc": "Corosync Cluster Engine",
+        "state": "running",
+        "active-state": "active",
+        "unit-state": "enabled",
+    },
+}
+
 MOCK_PCI_DEVICES = [
     {
         "id": "0000:01:00.0",

@@ -15,6 +15,8 @@ from tests.data.proxmox.guests import MOCK_CONTAINER_INTERFACES
 from tests.data.proxmox.guests import MOCK_CUSTOM_CPU_MODELS
 from tests.data.proxmox.guests import MOCK_GUEST_CONFIG
 from tests.data.proxmox.guests import MOCK_GUEST_RESOURCES
+from tests.data.proxmox.guests import MOCK_GUEST_STATUS
+from tests.data.proxmox.guests import MOCK_SNAPSHOT_CONFIGS
 from tests.data.proxmox.guests import MOCK_SNAPSHOTS
 from tests.data.proxmox.guests import MOCK_SSH_FINGERPRINT
 from tests.data.proxmox.guests import MOCK_SSH_PUBLIC_KEY
@@ -120,9 +122,25 @@ def test_transform_snapshots_orders_parents_first_and_drops_current():
         "vmstate": False,
         "parent": None,
         "parent_id": None,
+        **dict.fromkeys(guests.SNAPSHOT_CONFIG_PROPERTIES),
     }
     assert after["parent_id"] == "prod/node1/qemu/100/snapshot/before-upgrade"
     assert after["vmstate"] is True
+
+
+def test_transform_snapshots_adds_config_facts():
+    snapshots = guests.transform_snapshots(
+        MOCK_SNAPSHOTS[100], "node1/qemu/100", CLUSTER_ID, MOCK_SNAPSHOT_CONFIGS[100]
+    )
+
+    after = next(s for s in snapshots if s["name"] == "after-upgrade")
+    assert after["config_cores"] == 4
+    assert after["config_sockets"] == 2
+    assert after["config_memory"] == "8192"
+    assert after["config_machine"] == "pc-q35-9.2+pve1"
+    assert after["config_cpu_type"] == "custom-avx"
+    assert after["config_disk_count"] == 2
+    assert after["config_nic_count"] == 2
 
 
 def test_transform_snapshots_tolerates_missing_parent_and_cycles():
@@ -249,6 +267,12 @@ def _responses() -> dict[str, Any]:
     }
     for command, response in MOCK_AGENT_RESPONSES.items():
         responses[f"/nodes/pve/qemu/100/agent/{command}"] = response
+    for vmid, vm_type in ((100, "qemu"), (200, "lxc")):
+        responses[f"/nodes/pve/{vm_type}/{vmid}/status/current"] = MOCK_GUEST_STATUS[
+            vmid
+        ]
+        for name, config in MOCK_SNAPSHOT_CONFIGS[vmid].items():
+            responses[f"/nodes/pve/{vm_type}/{vmid}/snapshot/{name}/config"] = config
     return responses
 
 
@@ -267,7 +291,10 @@ def test_collect_guest_details_vm_api_calls(agent):
     )
 
     expected_calls = [
+        "/nodes/pve/qemu/100/status/current",
         "/nodes/pve/qemu/100/snapshot",
+        "/nodes/pve/qemu/100/snapshot/after-upgrade/config",
+        "/nodes/pve/qemu/100/snapshot/before-upgrade/config",
         "/nodes/pve/qemu/100/cloudinit",
     ]
     if agent:
@@ -307,12 +334,20 @@ def test_collect_guest_details_container_api_calls():
     )
 
     assert client.calls == [
+        "/nodes/pve/lxc/200/status/current",
         "/nodes/pve/lxc/200/snapshot",
+        "/nodes/pve/lxc/200/snapshot/base/config",
         "/nodes/pve/lxc/200/interfaces",
     ]
     assert [i["name"] for i in details.container_interfaces] == ["lo", "eth0"]
     assert ct["hastate"] is None
     assert ct["cloudinit_user"] is None
+    assert ct["ha_managed"] is False
+    assert ct["ha_state"] is None
+    assert ct["spice"] is None
+    assert details.snapshots[0]["config_disk_count"] == 2
+    assert details.snapshots[0]["config_nic_count"] == 1
+    assert details.snapshots[0]["config_cpu_type"] is None
 
 
 def test_collect_guest_details_stopped_guests_skip_runtime_calls():
@@ -325,7 +360,105 @@ def test_collect_guest_details_stopped_guests_skip_runtime_calls():
         {},
         enable_guest_agent=True,
     )
-    assert client.calls == ["/nodes/pve/lxc/200/snapshot"]
+    assert client.calls == [
+        "/nodes/pve/lxc/200/snapshot",
+        "/nodes/pve/lxc/200/snapshot/base/config",
+    ]
+
+
+def test_collect_guest_details_reads_status_of_running_vm():
+    client = RecordingClient(_responses())
+    # The list already has the running machine; the status fills the rest.
+    vm = _vm(100, "qemu", "running", **{"running-machine": "pc-q35-9.0"})
+
+    guests.collect_guest_details(
+        client, vm, MOCK_GUEST_CONFIG[100], CLUSTER_ID, {}, enable_guest_agent=False
+    )
+
+    assert vm["ha_managed"] is True
+    assert vm["ha_state"] == "started"
+    assert vm["ha_group"] is None
+    assert vm["ha_request"] is None
+    assert vm["spice"] is True
+    assert vm["clipboard"] == "vnc"
+    assert vm["running_machine"] == "pc-q35-9.0"
+    assert vm["running_qemu"] == "9.2.0"
+    assert vm["pbs_library_version"] == "1.4.1 (UNKNOWN)"
+    assert vm["proxmox_support"] == [
+        "backup-fleecing",
+        "backup-max-workers",
+        "pbs-dirty-bitmap",
+        "pbs-dirty-bitmap-migration",
+        "pbs-dirty-bitmap-savevm",
+        "pbs-masterkey",
+        "query-bitmap-info",
+    ]
+    # Runtime counters are not copied
+    assert "pid" not in guests.GUEST_DETAIL_PROPERTIES
+    assert vm.get("uptime") is None
+
+
+def test_transform_guest_status_older_ha_manager_fields():
+    result = guests.transform_guest_status(
+        {"ha": {"managed": 1, "state": "started", "group": "g1", "request": "x"}},
+    )
+    assert result["ha_group"] == "g1"
+    assert result["ha_request"] == "x"
+    assert result["proxmox_support"] is None
+    assert guests.transform_guest_status({})["ha_managed"] is None
+
+
+def test_collect_guest_details_status_and_snapshot_config_errors_are_skipped(caplog):
+    responses = _responses()
+    responses["/nodes/pve/qemu/100/status/current"] = ResourceException(
+        500, "Internal Server Error", "VM 100 not running"
+    )
+    responses["/nodes/pve/qemu/100/snapshot/before-upgrade/config"] = ResourceException(
+        500, "Internal Server Error", "snapshot does not exist"
+    )
+    vm = _vm(100, "qemu", "running")
+
+    details = guests.collect_guest_details(
+        RecordingClient(responses),
+        vm,
+        MOCK_GUEST_CONFIG[100],
+        CLUSTER_ID,
+        {},
+        enable_guest_agent=False,
+    )
+
+    assert vm["ha_managed"] is None
+    assert vm["spice"] is None
+    by_name = {s["name"]: s for s in details.snapshots}
+    assert by_name["before-upgrade"]["config_cores"] is None
+    assert by_name["after-upgrade"]["config_cores"] == 4
+    assert "Could not read the status of qemu guest 100" in caplog.text
+    assert "Could not read the configuration of snapshot before-upgrade" in caplog.text
+
+
+def test_transform_snapshot_config_vm_keeps_facts_only():
+    result = guests.transform_snapshot_config(
+        MOCK_SNAPSHOT_CONFIGS[100]["before-upgrade"], "qemu"
+    )
+    assert result == {
+        "config_cores": 2,
+        "config_sockets": 1,
+        "config_memory": "4096",
+        "config_machine": "pc-q35-8.1",
+        "config_ostype": "l26",
+        "config_cpu_type": "x86-64-v2-AES",
+        # ide2 is a CD-ROM (cloud-init drive) and is not counted
+        "config_disk_count": 1,
+        "config_nic_count": 1,
+    }
+    assert "$5$secret$hash" not in str(result)
+
+
+def test_cpu_type():
+    assert guests.cpu_type("x86-64-v2-AES,flags=+aes") == "x86-64-v2-AES"
+    assert guests.cpu_type("flags=+aes,cputype=host") == "host"
+    assert guests.cpu_type(None) is None
+    assert guests.cpu_type("") is None
 
 
 def test_collect_guest_details_agent_errors_are_skipped():

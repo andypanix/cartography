@@ -100,6 +100,10 @@ class ProxmoxCephClusterNodeProperties(CartographyNodeProperties):
         "ceph_versions",
         description="Distinct short Ceph versions reported by the daemons and nodes of the cluster.",
     )
+    crush_device_classes: PropertyRef = PropertyRef(
+        "crush_device_classes",
+        description="Device classes the CRUSH map assigns to OSDs, such as hdd or ssd. Empty when the CRUSH map could not be read.",
+    )
 
 
 @dataclass(frozen=True)
@@ -408,6 +412,42 @@ class ProxmoxCephCrushRuleNodeProperties(CartographyNodeProperties):
         "cluster_id",
         description="ID of the Proxmox VE cluster that runs the Ceph cluster.",
     )
+    rule_id: PropertyRef = PropertyRef(
+        "rule_id",
+        description="Numeric ID of the rule in the CRUSH map. Empty when the CRUSH map could not be read.",
+    )
+    rule_type: PropertyRef = PropertyRef(
+        "rule_type",
+        description="Type of pool the rule is for, such as replicated or erasure.",
+    )
+    min_size: PropertyRef = PropertyRef(
+        "min_size",
+        description="Smallest pool size the rule applies to, in CRUSH maps written before Ceph Reef.",
+    )
+    max_size: PropertyRef = PropertyRef(
+        "max_size",
+        description="Largest pool size the rule applies to, in CRUSH maps written before Ceph Reef.",
+    )
+    take_buckets: PropertyRef = PropertyRef(
+        "take_buckets",
+        description="Names of the CRUSH buckets the rule starts placement from (its take steps), usually a root.",
+    )
+    device_class: PropertyRef = PropertyRef(
+        "device_class",
+        description="Device class the rule restricts placement to, such as ssd, when it uses exactly one.",
+    )
+    device_classes: PropertyRef = PropertyRef(
+        "device_classes",
+        description="Every device class the take steps of the rule restrict placement to.",
+    )
+    failure_domain: PropertyRef = PropertyRef(
+        "failure_domain",
+        description="Bucket type of the last choose or chooseleaf step, such as host, across which replicas are spread.",
+    )
+    steps: PropertyRef = PropertyRef(
+        "steps",
+        description="Placement steps of the rule as written in the CRUSH map, such as chooseleaf firstn 0 type host.",
+    )
 
 
 @dataclass(frozen=True)
@@ -615,5 +655,132 @@ class ProxmoxCephFilesystemSchema(CartographyNodeSchema):
             ProxmoxCephToCephClusterRel(),
             ProxmoxCephFilesystemToPoolRel(),
             ProxmoxStorageToCephFilesystemRel(),
+        ],
+    )
+
+
+# ============================================================================
+# CRUSH buckets
+# ============================================================================
+
+
+@dataclass(frozen=True)
+class ProxmoxCephCrushBucketToChildBucketRel(CartographyRelSchema):
+    """The CRUSH bucket contains the child bucket in the CRUSH hierarchy, such as a root that contains a host."""
+
+    target_node_label: str = "ProxmoxCephCrushBucket"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("child_bucket_ids", one_to_many=True)},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "CONTAINS"
+    properties: ProxmoxCephRelProperties = ProxmoxCephRelProperties()
+
+
+@dataclass(frozen=True)
+class ProxmoxCephCrushBucketToOSDRel(CartographyRelSchema):
+    """The CRUSH bucket, usually a host, holds the OSD as a leaf of the CRUSH hierarchy."""
+
+    target_node_label: str = "ProxmoxCephOSD"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("osd_ids", one_to_many=True)},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "CONTAINS"
+    properties: ProxmoxCephRelProperties = ProxmoxCephRelProperties()
+
+
+@dataclass(frozen=True)
+class ProxmoxCephCrushBucketToNodeRel(CartographyRelSchema):
+    """The CRUSH host bucket stands for the Proxmox VE node of the same name."""
+
+    target_node_label: str = "ProxmoxNode"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("node_id")},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "REPRESENTS"
+    properties: ProxmoxCephRelProperties = ProxmoxCephRelProperties()
+
+
+@dataclass(frozen=True)
+class ProxmoxCephCrushRuleToBucketRel(CartographyRelSchema):
+    """The CRUSH rule starts data placement from the bucket with a take step."""
+
+    target_node_label: str = "ProxmoxCephCrushRule"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("rule_ids", one_to_many=True)},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "TAKES"
+    properties: ProxmoxCephRelProperties = ProxmoxCephRelProperties()
+
+
+@dataclass(frozen=True)
+class ProxmoxCephCrushBucketNodeProperties(CartographyNodeProperties):
+    id: PropertyRef = PropertyRef(
+        "id",
+        description="CRUSH bucket ID in the form cluster_id/crush_bucket:name.",
+    )
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+    name: PropertyRef = PropertyRef(
+        "name",
+        extra_index=True,
+        description="Bucket name, unique in the CRUSH map, such as default or the hostname of a node.",
+    )
+    cluster_id: PropertyRef = PropertyRef(
+        "cluster_id",
+        description="ID of the Proxmox VE cluster that runs the Ceph cluster.",
+    )
+    bucket_id: PropertyRef = PropertyRef(
+        "bucket_id",
+        description="Negative numeric ID of the bucket in the CRUSH map.",
+    )
+    type: PropertyRef = PropertyRef(
+        "type",
+        description="Bucket type, such as root, datacenter, rack, or host.",
+    )
+    type_id: PropertyRef = PropertyRef(
+        "type_id",
+        description="Number of the bucket type in the CRUSH map; higher numbers sit higher in the hierarchy.",
+    )
+    weight: PropertyRef = PropertyRef(
+        "weight",
+        description="CRUSH weight of the bucket, the sum of the weights of its items.",
+    )
+    alg: PropertyRef = PropertyRef(
+        "alg",
+        description="Bucket algorithm that picks among the items, such as straw2.",
+    )
+    hash: PropertyRef = PropertyRef(
+        "hash",
+        description="Hash function of the bucket, such as rjenkins1.",
+    )
+    device_classes: PropertyRef = PropertyRef(
+        "device_classes",
+        description="Device classes for which Ceph keeps a shadow copy of the bucket, such as ssd.",
+    )
+    item_count: PropertyRef = PropertyRef(
+        "item_count",
+        description="Number of child buckets and OSDs the bucket contains.",
+    )
+
+
+@dataclass(frozen=True)
+class ProxmoxCephCrushBucketSchema(CartographyNodeSchema):
+    """A bucket of the CRUSH hierarchy of a Proxmox VE Ceph cluster, such as a root, rack, or host, which groups OSDs for data placement."""
+
+    label: str = "ProxmoxCephCrushBucket"
+    properties: ProxmoxCephCrushBucketNodeProperties = (
+        ProxmoxCephCrushBucketNodeProperties()
+    )
+    sub_resource_relationship: ProxmoxCephToClusterRel = ProxmoxCephToClusterRel()
+    other_relationships: OtherRelationships = OtherRelationships(
+        [
+            ProxmoxCephToCephClusterRel(),
+            ProxmoxCephCrushBucketToChildBucketRel(),
+            ProxmoxCephCrushBucketToOSDRel(),
+            ProxmoxCephCrushBucketToNodeRel(),
+            ProxmoxCephCrushRuleToBucketRel(),
         ],
     )

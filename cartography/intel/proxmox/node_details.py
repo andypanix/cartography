@@ -290,6 +290,73 @@ def get_node_services(proxmox_client: Any, node_name: str) -> list[dict[str, Any
 
 @timeit
 @proxmox_api_retry
+def get_node_service_state(
+    proxmox_client: Any,
+    node_name: str,
+    service: str,
+) -> dict[str, Any]:
+    """
+    Read the state of one Proxmox system service of a node.
+
+    :param proxmox_client: Proxmox API client
+    :param node_name: Node name
+    :param service: Service ID from the service list, such as pveproxy
+    :return: Service dict with the same fields as a service list entry
+    """
+    return proxmox_client.nodes(node_name).services(service).state.get()
+
+
+def merge_service_states(
+    proxmox_client: Any,
+    node_name: str,
+    services: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Read the state endpoint of each listed service and merge it into the list entry.
+
+    pve-manager builds both responses with the same code, so the state
+    endpoint returns no field the list lacks. Its values are read after the
+    list and are kept when set; the list values fill the rest. A service whose
+    state cannot be read keeps its list entry.
+
+    :param proxmox_client: Proxmox API client
+    :param node_name: Node name
+    :param services: Response of the services endpoint
+    :return: Service dicts
+    """
+    merged = []
+    for service in services:
+        service_id = service.get("service")
+        if not service_id:
+            merged.append(service)
+            continue
+        try:
+            state = get_node_service_state(proxmox_client, node_name, service_id)
+        except PROXMOX_API_ERRORS as e:
+            logger.warning(
+                "Could not read the state of service %s on Proxmox node %s, "
+                "keeping the service list values: %s",
+                service_id,
+                node_name,
+                e,
+            )
+            merged.append(service)
+            continue
+        merged.append(
+            {
+                **service,
+                **{
+                    key: value
+                    for key, value in (state or {}).items()
+                    if value not in (None, "")
+                },
+            },
+        )
+    return merged
+
+
+@timeit
+@proxmox_api_retry
 def get_pci_devices(proxmox_client: Any, node_name: str) -> list[dict[str, Any]]:
     """
     List the PCI devices of a node, without the classes Proxmox filters by default.
@@ -1222,7 +1289,11 @@ def _collect_node(
     )
     data_by_label["ProxmoxService"].extend(
         transform_services(
-            get_node_services(proxmox_client, node_name),
+            merge_service_states(
+                proxmox_client,
+                node_name,
+                get_node_services(proxmox_client, node_name),
+            ),
             node_name,
             cluster_id,
         ),

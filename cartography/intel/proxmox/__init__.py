@@ -5,6 +5,7 @@ This module syncs Proxmox infrastructure including clusters, nodes, VMs,
 containers, storage, networks, users, and backup configurations.
 """
 
+import functools
 import logging
 from collections.abc import Callable
 from collections.abc import Iterable
@@ -269,9 +270,10 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
     storage_status_map = runner.run("storage", storage.sync, *sync_args)
 
     # Sync the hyper-converged Ceph cluster, after storage so RBD and CephFS
-    # storage can link to their pools and file systems. False means Ceph could
-    # not be read, so its cleanup is skipped to keep the existing Ceph data.
-    ceph_current = runner.run("ceph", ceph.sync, *sync_args)
+    # storage can link to their pools and file systems. The result tells
+    # whether Ceph and its CRUSH map could be read; when not, their cleanup is
+    # skipped to keep the existing data.
+    ceph_result = runner.run("ceph", ceph.sync, *sync_args)
 
     # Sync custom CPU models before compute so VMs can link to them
     runner.run(
@@ -414,8 +416,15 @@ def start_proxmox_ingestion(neo4j_session: neo4j.Session, config: Config) -> Non
             ),
         ),
     ]
-    if ceph_current:
-        cleanups.append((("ceph",), ceph.cleanup))
+    if ceph_result and ceph_result.current:
+        cleanups.append(
+            (
+                ("ceph",),
+                functools.partial(
+                    ceph.cleanup, include_crush=ceph_result.crush_current
+                ),
+            ),
+        )
     elif runner.ok("ceph"):
         logger.warning("Skipping Ceph cleanup: the Ceph data could not be read")
 

@@ -308,6 +308,27 @@ def test_raising_ceph_sync_skips_the_ceph_cleanup(neo4j_session, caplog):
     assert "the Ceph data could not be read" not in caplog.text
 
 
+@pytest.mark.parametrize("crush_current", [True, False])
+def test_unreadable_crush_map_keeps_crush_buckets_only(neo4j_session, crush_current):
+    """
+    When the CRUSH map could not be read, the Ceph cleanup still runs but keeps
+    the CRUSH buckets, and the sync does not fail.
+    """
+    _wipe(neo4j_session)
+    result = cartography.intel.proxmox.ceph.CephSyncResult(
+        current=True, crush_current=crush_current
+    )
+
+    with (
+        patch.object(cartography.intel.proxmox.ceph, "sync", return_value=result),
+        patch.object(cartography.intel.proxmox.ceph, "cleanup") as ceph_cleanup,
+    ):
+        _run_ingestion(neo4j_session, 1, MOCK_POOL_DETAILS, MOCK_ACL_DATA)
+
+    ceph_cleanup.assert_called_once()
+    assert ceph_cleanup.call_args.kwargs == {"include_crush": crush_current}
+
+
 def test_analysis_failure_is_reported_with_the_other_failed_modules(
     neo4j_session,
     caplog,

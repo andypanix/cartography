@@ -261,6 +261,38 @@ class ProxmoxVMNodeProperties(CartographyNodeProperties):
         "running_qemu",
         description="QEMU version the running VM uses.",
     )
+    ha_managed: PropertyRef = PropertyRef(
+        "ha_managed",
+        description="Whether the HA manager handles the guest, from the guest status. Running guests only.",
+    )
+    ha_state: PropertyRef = PropertyRef(
+        "ha_state",
+        description="State the HA manager reports for the guest, such as started, from the guest status. Running guests only.",
+    )
+    ha_group: PropertyRef = PropertyRef(
+        "ha_group",
+        description="HA group of the guest, when the guest status reports it (older HA manager versions). Running guests only.",
+    )
+    ha_request: PropertyRef = PropertyRef(
+        "ha_request",
+        description="Requested HA state of the guest, when the guest status reports it. Running guests only.",
+    )
+    spice: PropertyRef = PropertyRef(
+        "spice",
+        description="Whether the VM display supports the SPICE protocol. Running VMs only.",
+    )
+    clipboard: PropertyRef = PropertyRef(
+        "clipboard",
+        description="Clipboard set on the VM display, such as vnc; empty means the SPICE clipboard when SPICE is used. Running VMs only.",
+    )
+    proxmox_support: PropertyRef = PropertyRef(
+        "proxmox_support",
+        description="Proxmox QEMU features the running VM supports, such as pbs-dirty-bitmap or backup-fleecing.",
+    )
+    pbs_library_version: PropertyRef = PropertyRef(
+        "pbs_library_version",
+        description="Version of the Proxmox Backup Server library linked into the running QEMU process.",
+    )
     custom_cpu_model: PropertyRef = PropertyRef(
         "custom_cpu_model",
         description="Name of the custom CPU model set as the VM CPU type, without the custom- prefix.",

@@ -51,6 +51,38 @@ class ProxmoxSnapshotNodeProperties(CartographyNodeProperties):
         "parent",
         description="Name of the parent snapshot, if any.",
     )
+    config_cores: PropertyRef = PropertyRef(
+        "config_cores",
+        description="CPU cores per socket (VM) or CPU cores (container) in the configuration saved with the snapshot.",
+    )
+    config_sockets: PropertyRef = PropertyRef(
+        "config_sockets",
+        description="CPU sockets in the configuration saved with the snapshot, when set. VMs only.",
+    )
+    config_memory: PropertyRef = PropertyRef(
+        "config_memory",
+        description="Memory in MiB in the configuration saved with the snapshot, when set.",
+    )
+    config_machine: PropertyRef = PropertyRef(
+        "config_machine",
+        description="QEMU machine type in the configuration saved with the snapshot, when set. VMs only.",
+    )
+    config_ostype: PropertyRef = PropertyRef(
+        "config_ostype",
+        description="Guest operating system type in the configuration saved with the snapshot, such as l26 or debian.",
+    )
+    config_cpu_type: PropertyRef = PropertyRef(
+        "config_cpu_type",
+        description="CPU type in the configuration saved with the snapshot, such as x86-64-v2-AES, when set. VMs only.",
+    )
+    config_disk_count: PropertyRef = PropertyRef(
+        "config_disk_count",
+        description="Disks in the configuration saved with the snapshot: drives other than CD-ROMs for VMs, root and mount point volumes for containers.",
+    )
+    config_nic_count: PropertyRef = PropertyRef(
+        "config_nic_count",
+        description="Network interfaces in the configuration saved with the snapshot.",
+    )
 
 
 @dataclass(frozen=True)

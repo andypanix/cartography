@@ -74,6 +74,69 @@ def get_storage_status(proxmox_client: Any, node_name: str) -> List[Dict[str, An
 
 @timeit
 @proxmox_api_retry
+def get_storage_status_detail(
+    proxmox_client: Any,
+    node_name: str,
+    storage_name: str,
+) -> Dict[str, Any]:
+    """
+    Read the status of one storage on one node.
+
+    :param proxmox_client: Proxmox API client
+    :param node_name: Node name
+    :param storage_name: Storage name
+    :return: Status dict with type, content, enabled, active, shared, and sizes
+    """
+    return proxmox_client.nodes(node_name).storage(storage_name).status.get()
+
+
+def merge_storage_status_details(
+    proxmox_client: Any,
+    node_name: str,
+    status_list: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Read the status endpoint of each active storage of a node and merge it in.
+
+    pve-storage builds both responses from the same storage_info call, so the
+    per-storage status returns no field the per-node list lacks. The list
+    values are kept; the per-storage status only fills fields the list leaves
+    unset. A storage whose status cannot be read keeps its list entry.
+
+    :param proxmox_client: Proxmox API client
+    :param node_name: Node name
+    :param status_list: Response of /nodes/{node}/storage
+    :return: Storage status dicts
+    """
+    merged = []
+    for status in status_list:
+        storage_name = status.get("storage")
+        if not storage_name or not status.get("active"):
+            merged.append(status)
+            continue
+        try:
+            detail = get_storage_status_detail(proxmox_client, node_name, storage_name)
+        except (ResourceException, requests.exceptions.RequestException) as e:
+            logger.warning(
+                "Could not read the status of storage %s on node %s, keeping "
+                "the storage list values: %s",
+                storage_name,
+                node_name,
+                e,
+            )
+            merged.append(status)
+            continue
+        merged.append(
+            {
+                **{k: v for k, v in (detail or {}).items() if v is not None},
+                **{k: v for k, v in status.items() if v is not None},
+            },
+        )
+    return merged
+
+
+@timeit
+@proxmox_api_retry
 def get_storage_identity(
     proxmox_client: Any,
     node_name: str,
@@ -300,7 +363,9 @@ def sync(
     for node in nodes:
         node_name = node["node"]
         storage_status = get_storage_status(proxmox_client, node_name)
-        storage_status_map[node_name] = storage_status
+        storage_status_map[node_name] = merge_storage_status_details(
+            proxmox_client, node_name, storage_status
+        )
 
     # TRANSFORM - manipulate data for ingestion
     identities = get_shared_storage_identities(
